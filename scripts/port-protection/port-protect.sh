@@ -26,12 +26,13 @@ show_help() {
     echo
     echo "添加/移除选项:"
     echo "  -p, --protocol <tcp|udp>     协议类型 (默认: tcp)"
-    echo "  -l, --limit <rate>           请求限制速率 (默认: 10/min)"
-    echo "  -b, --burst <count>          突发请求限制 (默认: 20)"
+    echo "  -l, --limit <rate>           请求限制速率 (默认: 5/min)"
+    echo "  -b, --burst <count>          突发请求限制 (默认: 10)"
     echo "  -t, --trust <ip>             添加可信IP (可多次使用)"
     echo "  -c, --chain <name>           自定义链名称 (默认: DOCKER-HOST-PROTECT)"
-    echo "  -r, --rdp                    RDP协议优化模式 (放宽限制)"
+    echo "  -r, --rdp                    RDP协议优化模式 (10/min, burst 15)"
     echo "  -w, --whitelist-only         仅允许可信IP访问 (不添加速率限制)"
+    echo "  -s, --strict                 严格模式 (2/min, burst 3) - 高安全环境"
     echo
     echo "示例:"
     echo "  # 添加RDP端口保护 (优化模式)"
@@ -259,12 +260,13 @@ add_rules() {
     
     # 解析选项
     local protocol="tcp"
-    local limit="10/min"
-    local burst="20"
+    local limit="5/min"
+    local burst="10"
     local trusted_ips=()
     local chain_name="$CHAIN_NAME"
     local rdp_mode=false
     local whitelist_only=false
+    local strict_mode=false
     
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -319,13 +321,20 @@ add_rules() {
                 ;;
             -r|--rdp)
                 rdp_mode=true
-                # RDP协议优化参数
-                limit="30/min"
-                burst="50"
+                # RDP协议优化参数 - 更严格的限制
+                limit="10/min"
+                burst="15"
                 shift
                 ;;
             -w|--whitelist-only)
                 whitelist_only=true
+                shift
+                ;;
+            -s|--strict)
+                strict_mode=true
+                # 严格模式参数 - 最严格的速率限制
+                limit="2/min"
+                burst="3"
                 shift
                 ;;
             *)
@@ -417,8 +426,10 @@ add_rules() {
         echo "   - 已建立连接: 无限制"
     elif [ "$whitelist_only" = true ]; then
         echo "   - 白名单模式: 仅允许可信IP访问"
+    elif [ "$strict_mode" = true ]; then
+        echo "   - 严格模式: 速率限制 $limit (突发: $burst) - 高安全防护"
     else
-        echo "   - 速率限制: $limit (突发: $burst)"
+        echo "   - 标准模式: 速率限制 $limit (突发: $burst)"
     fi
     if [ ${#trusted_ips[@]} -gt 0 ]; then
         echo "   - 可信IP: ${trusted_ips[*]}"
