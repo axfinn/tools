@@ -30,10 +30,18 @@ show_help() {
     echo "  -b, --burst <count>          突发请求限制 (默认: 20)"
     echo "  -t, --trust <ip>             添加可信IP (可多次使用)"
     echo "  -c, --chain <name>           自定义链名称 (默认: DOCKER-HOST-PROTECT)"
+    echo "  -r, --rdp                    RDP协议优化模式 (放宽限制)"
+    echo "  -w, --whitelist-only         仅允许可信IP访问 (不添加速率限制)"
     echo
     echo "示例:"
+    echo "  # 添加RDP端口保护 (优化模式)"
+    echo "  $0 add 19099 --rdp -t 192.168.1.100 -t 10.0.0.5"
+    echo
     echo "  # 添加端口保护并备份"
     echo "  $0 add 8080 -t 192.168.1.100 -t 10.0.0.5 && $0 backup before_8080"
+    echo
+    echo "  # 仅允许可信IP访问 (白名单模式)"
+    echo "  $0 add 22 --whitelist-only -t 192.168.1.0/24"
     echo
     echo "  # 查看备份列表并恢复"
     echo "  $0 list-backups"
@@ -255,6 +263,8 @@ add_rules() {
     local burst="20"
     local trusted_ips=()
     local chain_name="$CHAIN_NAME"
+    local rdp_mode=false
+    local whitelist_only=false
     
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -307,6 +317,17 @@ add_rules() {
                 chain_name="$2"
                 shift 2
                 ;;
+            -r|--rdp)
+                rdp_mode=true
+                # RDP协议优化参数
+                limit="30/min"
+                burst="50"
+                shift
+                ;;
+            -w|--whitelist-only)
+                whitelist_only=true
+                shift
+                ;;
             *)
                 echo "错误: 未知选项 $1" >&2
                 show_help
@@ -339,18 +360,43 @@ add_rules() {
         fi
     done
     
-    # 添加速率限制规则
-    if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" \
-                   -m conntrack --ctstate NEW \
-                   -m limit --limit "$limit" --limit-burst "$burst" -j ACCEPT 2>/dev/null; then
-        echo "错误: 无法添加速率限制规则" >&2
-        exit 1
-    fi
-    
-    # 添加拒绝规则
-    if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" -j DROP 2>/dev/null; then
-        echo "错误: 无法添加拒绝规则" >&2
-        exit 1
+    # 如果是白名单模式，只允许可信IP访问
+    if [ "$whitelist_only" = true ]; then
+        if [ ${#trusted_ips[@]} -eq 0 ]; then
+            echo "错误: 白名单模式至少需要一个可信IP" >&2
+            exit 1
+        fi
+        # 直接拒绝其他所有连接
+        if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" -j DROP 2>/dev/null; then
+            echo "错误: 无法添加白名单拒绝规则" >&2
+            exit 1
+        fi
+        echo " [+] 白名单模式: 仅允许可信IP访问"
+    else
+        # RDP模式或普通模式的速率限制
+        if [ "$rdp_mode" = true ]; then
+            # RDP特殊处理：允许已建立的连接
+            if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" \
+                           -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null; then
+                echo "错误: 无法添加RDP已建立连接规则" >&2
+                exit 1
+            fi
+            echo " [+] RDP模式: 允许已建立的连接"
+        fi
+        
+        # 添加速率限制规则
+        if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" \
+                       -m conntrack --ctstate NEW \
+                       -m limit --limit "$limit" --limit-burst "$burst" -j ACCEPT 2>/dev/null; then
+            echo "错误: 无法添加速率限制规则" >&2
+            exit 1
+        fi
+        
+        # 添加拒绝规则
+        if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" -j DROP 2>/dev/null; then
+            echo "错误: 无法添加拒绝规则" >&2
+            exit 1
+        fi
     fi
     
     # 检查INPUT链中是否已存在相同规则
@@ -366,7 +412,14 @@ add_rules() {
     fi
     
     echo "✅ 已成功添加端口 $port/$protocol 的防护规则"
-    echo "   - 速率限制: $limit (突发: $burst)"
+    if [ "$rdp_mode" = true ]; then
+        echo "   - RDP优化模式: 速率限制 $limit (突发: $burst)"
+        echo "   - 已建立连接: 无限制"
+    elif [ "$whitelist_only" = true ]; then
+        echo "   - 白名单模式: 仅允许可信IP访问"
+    else
+        echo "   - 速率限制: $limit (突发: $burst)"
+    fi
     if [ ${#trusted_ips[@]} -gt 0 ]; then
         echo "   - 可信IP: ${trusted_ips[*]}"
     fi

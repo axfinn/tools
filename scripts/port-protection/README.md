@@ -7,6 +7,8 @@
 ## 功能特性
 
 - ✅ **端口保护**: 为指定端口添加速率限制和访问控制
+- ✅ **RDP优化模式**: 专为RDP等长连接协议优化的保护模式
+- ✅ **白名单模式**: 仅允许可信IP访问的严格访问控制
 - ✅ **可信IP管理**: 支持添加多个可信IP地址白名单
 - ✅ **规则备份**: 自动备份和恢复 iptables 规则
 - ✅ **持久化保存**: 支持将规则保存到系统配置，重启后自动加载
@@ -91,6 +93,8 @@ sudo ./port-protect.sh add 8080 \
 | `--burst` | `-b` | 20 | 突发请求限制数量 |
 | `--trust` | `-t` | 无 | 可信IP (可多次使用) |
 | `--chain` | `-c` | DOCKER-HOST-PROTECT | 自定义链名称 |
+| `--rdp` | `-r` | 无 | RDP协议优化模式 |
+| `--whitelist-only` | `-w` | 无 | 仅允许可信IP访问 |
 
 ### 2. 移除端口保护
 
@@ -165,7 +169,46 @@ sudo ./port-protect.sh backup web_server_protection
 sudo ./port-protect.sh save
 ```
 
-### 场景2: 保护API服务
+### 场景2: 保护RDP远程桌面服务
+
+```bash
+# 方式1: RDP优化模式 (推荐)
+sudo ./port-protect.sh add 19099 \
+  --rdp \
+  --trust 192.168.1.100 \
+  --trust 10.0.0.0/24
+
+# 方式2: 仅白名单模式 (最安全)
+sudo ./port-protect.sh add 19099 \
+  --whitelist-only \
+  --trust 192.168.1.100 \
+  --trust 192.168.1.101
+
+# 备份配置
+sudo ./port-protect.sh backup rdp_protection
+
+# 保存规则
+sudo ./port-protect.sh save
+```
+
+### 场景3: 保护SSH服务
+
+```bash
+# SSH服务使用白名单模式最安全
+sudo ./port-protect.sh add 22 \
+  --whitelist-only \
+  --trust 192.168.1.0/24 \
+  --trust 203.0.113.100
+
+# 或者使用严格的速率限制
+sudo ./port-protect.sh add 22 \
+  --protocol tcp \
+  --limit 2/min \
+  --burst 5 \
+  --trust 192.168.1.0/24
+```
+
+### 场景4: 保护API服务
 
 ```bash
 # 为API服务添加严格限制
@@ -180,7 +223,7 @@ sudo ./port-protect.sh add 8080 \
 sudo ./port-protect.sh status
 ```
 
-### 场景3: 临时保护和恢复
+### 场景5: 临时保护和恢复
 
 ```bash
 # 备份当前状态
@@ -257,6 +300,24 @@ sudo ./port-protect.sh status
 sudo iptables -L -n --line-numbers
 ```
 
+### Q6: RDP连接添加规则后无法使用
+```bash
+# 先移除有问题的规则
+sudo ./port-protect.sh remove 19099
+
+# 使用RDP优化模式重新添加
+sudo ./port-protect.sh add 19099 --rdp -t 你的IP地址
+
+# 或使用白名单模式（最安全）
+sudo ./port-protect.sh add 19099 --whitelist-only -t 你的IP地址
+```
+
+### Q7: 如何为特定协议选择合适的保护模式
+- **RDP/VNC等远程桌面**: 推荐使用 `--rdp` 模式或 `--whitelist-only` 模式
+- **SSH**: 推荐使用 `--whitelist-only` 模式，限制特定IP访问
+- **Web服务**: 使用默认模式，适当调整 `--limit` 和 `--burst` 参数
+- **API服务**: 使用较严格的速率限制或白名单模式
+
 ## 安全建议
 
 1. **测试环境**: 在生产环境使用前，先在测试环境验证
@@ -272,6 +333,11 @@ sudo iptables -L -n --line-numbers
 # 为多个端口添加相同规则
 for port in 8080 8081 8082; do
     sudo ./port-protect.sh add $port --trust 192.168.1.0/24
+done
+
+# 为多个RDP端口添加优化保护
+for port in 3389 19099 19100; do
+    sudo ./port-protect.sh add $port --rdp --trust 192.168.1.0/24
 done
 ```
 
@@ -289,6 +355,37 @@ if ! /usr/local/bin/port-protect.sh status | grep -q "DOCKER-HOST-PROTECT"; then
     echo "WARNING: Port protection not active!" | mail -s "Security Alert" admin@example.com
 fi
 ```
+
+## 新功能详解
+
+### RDP优化模式 (`--rdp`)
+
+RDP优化模式专为远程桌面协议设计，解决了传统速率限制对长连接协议的影响：
+
+**特性：**
+- 自动调整速率限制为 `30/min`，突发限制为 `50`
+- 允许已建立的连接（`ESTABLISHED,RELATED` 状态）无限制通过
+- 针对RDP协议的连接特性进行优化
+
+**适用场景：**
+- Windows远程桌面连接
+- VNC连接
+- 其他需要保持长连接的远程管理协议
+
+### 白名单模式 (`--whitelist-only`)
+
+白名单模式提供最严格的访问控制，仅允许指定的IP地址访问：
+
+**特性：**
+- 不使用速率限制，直接基于IP地址进行访问控制
+- 必须配合 `--trust` 参数使用
+- 提供最高级别的安全保护
+
+**适用场景：**
+- SSH管理端口
+- 数据库连接端口
+- 内部管理接口
+- 高安全性要求的服务
 
 ## 更新日志
 
