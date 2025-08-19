@@ -2,12 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2025-08-19
+
+### Changed
+- 重构项目目录结构，优化脚本管理
+- 将端口保护脚本移动到独立目录 `scripts/port-protection/`
+- 更新项目主 README.md，添加完整的项目介绍和使用指南
+- 创建 scripts 目录总体说明文档
+
+### Added
+- 建立模块化脚本管理体系
+- 添加贡献指南和开发规范
+- 完善项目文档结构
+
 ## [1.0.0] - 2025-08-19
 
 ### Added
 - 初始化 tools 项目
 - 创建 scripts 目录
-- 添加增强版 Docker 端口保护脚本 (`scripts/port-protect.sh`)
+- 添加增强版 Docker 端口保护脚本 (`scripts/port-protection/port-protect.sh`)
   - 支持端口保护规则的添加和移除
   - 集成 iptables 规则备份和恢复功能
   - 支持多个可信IP地址白名单配置
@@ -15,7 +28,7 @@ All notable changes to this project will be documented in this file.
   - 包含完善的参数验证和错误处理
   - 支持规则持久化保存
   - 实现状态监控和规则查看功能
-- 创建详细的使用手册 (`scripts/README.md`)
+- 创建详细的使用手册 (`scripts/port-protection/README.md`)
   - 包含完整的功能特性说明
   - 提供详细的安装和配置指南
   - 包含多种使用场景示例
