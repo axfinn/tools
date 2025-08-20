@@ -97,7 +97,62 @@ done
 - 添加贡献指南和开发规范
 - 完善项目文档结构
 
-## [1.0.0] - 2025-08-19
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [2024-08-20] - Nginx管理系统增强
+
+### Added
+- **自定义配置路径支持** - nginx-manager.sh 现支持指定自定义nginx配置目录
+  - 新增 `-c, --config` 全局参数指定配置路径
+  - 智能路径检测：自动识别文件路径vs目录路径
+  - 支持开发环境、容器化部署等多种场景
+  - 自动创建必要的目录结构
+
+- **中文配置文档生成增强**
+  - `generate-docs` 命令现包含自定义配置路径信息
+  - 详细的长连接和WebSocket配置统计
+  - 配置文件路径和状态信息展示
+
+- **长连接配置优化说明**
+  - 详细的WebSocket长连接处理方案文档
+  - 协议升级、连接保持、超时优化等配置说明
+  - 性能优化建议和最佳实践
+
+- **测试工具增强**
+  - 新增 `test-custom-config.sh` 专门测试自定义配置功能
+  - 自动创建测试环境和清理机制
+  - 全面的功能验证流程
+
+### Enhanced
+- **状态显示优化** - `status` 命令现显示更详细的配置路径信息
+- **帮助信息完善** - 添加长连接配置说明和使用示例
+- **错误处理改进** - 更好的参数验证和错误提示
+
+## [2024-08-19] - Nginx Management System
+
+### Added
+- **New nginx-manager.sh script** - Complete nginx configuration management system
+  - Virtual host management (static sites and reverse proxy)
+  - SSL certificate setup and management
+  - WebSocket and long connection support
+  - Load balancing configuration
+  - Automatic security headers and optimization
+  - Configuration backup and restore
+  - Comprehensive error handling and validation
+
+- **Nginx configuration templates**
+  - Static site template with optimization
+  - Reverse proxy template with WebSocket support
+  - SSL configuration template with security best practices
+
+- **Documentation and testing**
+  - Complete README with usage examples
+  - Quick start guide for rapid deployment
+  - Automated test script for functionality validation
+
+## [2024-08-19] - Port Protection Enhanced
 
 ### Added
 - 初始化 tools 项目

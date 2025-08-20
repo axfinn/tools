@@ -10,9 +10,14 @@ tools/
 ├── CHANGELOG.md                 # 项目变更日志
 └── scripts/                     # 脚本工具目录
     ├── README.md               # 脚本目录说明
-    └── port-protection/        # 端口保护脚本
-        ├── port-protect.sh     # Docker 端口保护主脚本
-        └── README.md           # 详细使用说明
+    ├── port-protection/        # 端口保护脚本
+    │   ├── port-protect.sh     # Docker 端口保护主脚本
+    │   └── README.md           # 详细使用说明
+    └── nginx-manager/          # Nginx 配置管理脚本
+        ├── nginx-manager.sh    # Nginx 管理主脚本
+        ├── README.md           # 详细使用说明
+        ├── QUICKSTART.md      # 快速入门指南
+        └── templates/          # 配置模板目录
 ```
 
 ## 🛠️ 可用工具
@@ -24,6 +29,17 @@ tools/
   - 端口访问控制和速率限制
   - 规则备份和恢复功能
   - 可信IP白名单管理
+
+### 🌐 Web服务管理类
+
+- **[Nginx管理脚本](./scripts/nginx-manager/)** - 专业的Nginx配置管理系统
+  - 虚拟站点管理（静态站点、反向代理）
+  - SSL证书自动配置和管理
+  - WebSocket长连接支持
+  - 负载均衡配置
+  - 自定义配置路径支持
+  - 中文配置文档自动生成
+  - 配置备份和恢复功能
 
 ## 🚀 快速开始
 
@@ -39,14 +55,28 @@ tools/
    ```
 
 3. **进入具体脚本目录并查看说明**
+
    ```bash
+   # 端口保护脚本
    cd scripts/port-protection
+   cat README.md
+   
+   # Nginx管理脚本
+   cd scripts/nginx-manager
    cat README.md
    ```
 
 4. **运行脚本**
+
    ```bash
+   # 端口保护
    sudo ./port-protect.sh help
+   
+   # Nginx管理
+   sudo ./nginx-manager.sh --help
+   
+   # 快速添加站点
+   sudo ./nginx-manager.sh add-site example.com -r /var/www/example.com
    ```
 
 ## 📋 使用要求
