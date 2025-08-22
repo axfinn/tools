@@ -1,0 +1,35 @@
+# 🚫 Nginx Manager 忽略文件
+
+# 自动生成的配置文档
+scripts/nginx-manager/docs/nginx_config_docs_*.md
+
+# 备份文件
+*.backup
+*.bak
+*~
+
+# 临时文件
+*.tmp
+*.temp
+.DS_Store
+
+# 日志文件
+*.log
+
+# 测试产生的配置文件
+test_*
+*_test.conf
+
+# 编辑器临时文件
+*.swp
+*.swo
+*~
+
+# IDE 文件
+.vscode/
+.idea/
+*.iml
+
+# 操作系统文件
+Thumbs.db
+.DS_Store
