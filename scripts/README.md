@@ -17,10 +17,18 @@ scripts/
     ├── CUSTOM-CONFIG.md       # 自定义配置功能说明
     ├── test.sh               # 功能测试脚本
     ├── test-custom-config.sh  # 自定义配置测试
-    └── templates/             # 配置模板目录
-        ├── static-site.conf   # 静态站点模板
-        ├── proxy-site.conf    # 反向代理模板
-        └── ssl-config.conf    # SSL配置模板
+    ├── docs/                 # 生成的配置文档目录
+    │   └── README.md         # 文档目录说明
+    ├── examples/             # 示例配置和演示
+    │   ├── README.md         # 示例说明
+    │   ├── demo.sh           # 功能演示脚本
+    │   ├── nginx.conf        # 示例主配置
+    │   ├── sites-available/  # 示例站点配置
+    │   └── sites-enabled/    # 示例启用站点
+    └── templates/            # 配置模板目录
+        ├── static-site.conf  # 静态站点模板
+        ├── proxy-site.conf   # 反向代理模板
+        └── ssl-config.conf   # SSL配置模板
 ```
 
 ## 脚本列表

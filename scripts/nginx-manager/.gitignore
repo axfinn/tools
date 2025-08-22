@@ -1,0 +1,20 @@
+# 🚫 Nginx Manager 项目忽略文件
+
+# 自动生成的配置文档（保留 docs/README.md）
+docs/nginx_config_docs_*.md
+
+# 测试产生的配置文件
+test_*
+*_test.conf
+
+# 备份文件
+*.backup
+*.bak
+*~
+
+# 临时文件
+*.tmp
+*.temp
+
+# 日志文件
+*.log

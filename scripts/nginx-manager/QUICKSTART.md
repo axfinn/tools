@@ -72,6 +72,10 @@ sudo ./nginx-manager.sh backup my_backup
 
 # 优化nginx
 sudo ./nginx-manager.sh optimize
+
+# 生成配置文档
+sudo ./nginx-manager.sh generate-docs
+# 文档保存在 docs/ 目录中
 ```
 
 ## 常用命令速查

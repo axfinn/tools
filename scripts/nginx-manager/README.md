@@ -6,64 +6,9 @@
 
 ## 功能特性
 
-- ✅ **虚拟站点管理**: 快速创建和管理静态网### 4. 负载均衡配置
-
-使用逗号分隔多个后端服务器：
-
-```bash
-sudo ./nginx-manager.sh add-proxy app.example.com -p "http://backend1:8080,http://backend2:8080,http://backend3:8080"
-```
-
-### 5. 长连接和WebSocket支持
-
-#### WebSocket长连接配置
-
-脚本的 `--websocket` 选项会自动配置以下长连接优化：
-
-```bash
-sudo ./nginx-manager.sh add-proxy ws.example.com -p http://localhost:3000 --websocket
-```
-
-**自动配置的长连接特性：**
-
-- **协议升级**: 自动处理HTTP到WebSocket的协议升级
-- **连接保持**: 配置长连接保持参数
-- **代理头设置**: 正确传递原始请求头
-- **缓存绕过**: WebSocket连接绕过nginx缓存
-- **超时优化**: 扩展连接超时时间
-
-**生成的nginx配置包含：**
-
-```nginx
-# WebSocket协议升级
-proxy_http_version 1.1;
-proxy_set_header Upgrade $http_upgrade;
-proxy_set_header Connection "upgrade";
-
-# 长连接保持
-proxy_set_header Host $host;
-proxy_set_header X-Real-IP $remote_addr;
-proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-proxy_set_header X-Forwarded-Proto $scheme;
-
-# 超时设置
-proxy_connect_timeout 300s;
-proxy_send_timeout 300s;
-proxy_read_timeout 300s;
-
-# 缓存控制
-proxy_cache_bypass $http_upgrade;
-```
-
-#### 长连接性能优化
-
-对于高并发长连接场景，脚本还会配置：
-
-- **keepalive连接池**: 复用后端连接
-- **缓冲区优化**: 适合长连接的缓冲区设置
-- **压缩控制**: 智能压缩策略
-
-### 6. SSL证书管理向代理配置**: 支持单后端和负载均衡代理
+- ✅ **虚拟站点管理**: 快速创建和管理静态网站
+- ✅ **反向代理配置**: 简化的反向代理设置
+- ✅ **负载均衡配置**: 支持单后端和负载均衡代理
 - ✅ **SSL证书管理**: 自动配置SSL证书和安全设置
 - ✅ **WebSocket支持**: 完整的WebSocket长连接支持
 - ✅ **负载均衡**: 多后端服务器负载均衡
@@ -71,6 +16,39 @@ proxy_cache_bypass $http_upgrade;
 - ✅ **安全优化**: 内置安全头和最佳实践配置
 - ✅ **性能优化**: Gzip压缩、缓存、长连接等优化
 - ✅ **配置测试**: 自动测试配置有效性
+- ✅ **生成中文配置文档**: 自动生成当前nginx配置的中文Markdown文档
+
+## 🖥️ 系统兼容性
+
+本项目提供了多个版本以确保最佳兼容性：
+
+| 脚本版本 | 系统支持 | 特性 |
+|---------|---------|------|
+| `nginx-manager.sh` | 🌐 通用版本 (Linux/macOS) | 完整功能，自动检测系统 |
+| `nginx-manager-macos.sh` | 🍎 macOS 专版 | Homebrew 优化，macOS 路径 |
+| `nginx-manager-linux.sh` | 🐧 Linux 专版 | 多发行版支持，systemd 集成 |
+
+### 📋 选择指南
+
+- **🔰 新用户推荐**: 使用 `./nginx-manager` (智能启动器)
+- **🍎 macOS + Homebrew**: 使用 `nginx-manager-macos.sh` 
+- **🐧 Linux 服务器**: 使用 `nginx-manager-linux.sh`
+
+### 🚀 智能启动器
+
+使用 `nginx-manager` 智能启动器会自动检测您的系统并推荐最适合的版本：
+
+```bash
+# 智能选择并运行（推荐）
+./nginx-manager generate-docs
+
+# 交互式选择版本
+./nginx-manager
+
+# 直接指定版本
+./nginx-manager macos generate-docs
+./nginx-manager linux generate-docs
+```
 
 ## 系统要求
 
@@ -142,6 +120,7 @@ sudo ./nginx-manager.sh -c /custom/nginx status
 | `reload` | 重载配置 | `reload` |
 | `optimize` | 优化主配置 | `optimize` |
 | `status` | 查看状态 | `status` |
+| `generate-docs` | 生成中文配置文档 | `generate-docs` |
 
 ## 详细功能说明
 
@@ -216,6 +195,49 @@ sudo ./nginx-manager.sh backup production
 ```bash
 sudo ./nginx-manager.sh restore production
 ```
+
+### 6. 生成中文配置文档
+
+使用 `generate-docs` 命令可以自动读取当前nginx配置，生成一份结构化的中文Markdown文档，便于归档、审计和团队协作。
+
+#### 用法
+
+```bash
+sudo ./nginx-manager.sh generate-docs
+# 或指定自定义配置目录
+sudo ./nginx-manager.sh -c /custom/nginx generate-docs
+```
+
+#### 功能说明
+- 自动分析当前nginx主配置、虚拟主机、反向代理、SSL、WebSocket等所有站点配置
+- 统计站点数量、启用状态、长连接/负载均衡/SSL等特性
+- 输出详细的中文结构化文档，包含配置路径、站点类型、关键参数等
+- 文档自动保存在脚本目录下的 `docs/` 文件夹中，文件名如：`docs/nginx_config_docs_20250822_153000.md`
+
+#### 示例输出片段
+
+```markdown
+# 🌐 Nginx 配置文档
+
+**生成时间**: 2025年08月22日 15:30:00  
+**服务器**: myserver  
+**Nginx版本**: 1.24.0  
+**配置目录**: /etc/nginx  
+**主配置文件**: /etc/nginx/nginx.conf
+
+---
+
+## 📋 配置概览
+- 站点总数: 5
+- 启用站点: 4
+- 反向代理: 2
+- WebSocket长连接: 1
+- 含SSL站点: 3
+- 静态站点: 2
+...（更多详细内容）
+```
+
+> 生成的文档可直接用于归档、交付、团队审查或自动化文档系统。文档保存在 `docs/` 目录中，便于版本管理和分享。
 
 ## 使用示例
 

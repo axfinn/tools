@@ -157,11 +157,17 @@ init_environment() {
 
 # 生成中文配置文档
 generate_docs() {
-    local doc_file="nginx_config_docs_$(date +%Y%m%d_%H%M%S).md"
+    local script_dir="$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")"
+    local docs_dir="$script_dir/docs"
+    local doc_file="$docs_dir/nginx_config_docs_$(date +%Y%m%d_%H%M%S).md"
     
     echo "🔄 正在生成Nginx配置文档..."
     echo "📍 配置目录: $NGINX_CONF_DIR"
     echo "📄 主配置文件: $NGINX_CONF_FILE"
+    echo "📁 文档保存目录: $docs_dir"
+    
+    # 确保docs目录存在
+    mkdir -p "$docs_dir"
     
     cat > "$doc_file" << 'DOC_HEADER'
 # 🌐 Nginx 配置文档
@@ -179,11 +185,21 @@ generate_docs() {
 DOC_HEADER
     
     # 替换动态内容
-    sed -i "s/DOC_TIMESTAMP/$(date '+%Y年%m月%d日 %H:%M:%S')/g" "$doc_file"
-    sed -i "s/DOC_HOSTNAME/$(hostname)/g" "$doc_file"
-    sed -i "s/DOC_VERSION/$(nginx -v 2>&1 | sed 's/nginx version: nginx\///')/g" "$doc_file"
-    sed -i "s|DOC_CONFIG_DIR|$NGINX_CONF_DIR|g" "$doc_file"
-    sed -i "s|DOC_CONFIG_FILE|$NGINX_CONF_FILE|g" "$doc_file"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS 需要 -i '' 参数
+        sed -i '' "s/DOC_TIMESTAMP/$(date '+%Y年%m月%d日 %H:%M:%S')/g" "$doc_file"
+        sed -i '' "s/DOC_HOSTNAME/$(hostname)/g" "$doc_file"
+        sed -i '' "s/DOC_VERSION/$(nginx -v 2>&1 | sed 's/nginx version: nginx\///' 2>/dev/null || echo '未安装')/g" "$doc_file"
+        sed -i '' "s|DOC_CONFIG_DIR|$NGINX_CONF_DIR|g" "$doc_file"
+        sed -i '' "s|DOC_CONFIG_FILE|$NGINX_CONF_FILE|g" "$doc_file"
+    else
+        # Linux
+        sed -i "s/DOC_TIMESTAMP/$(date '+%Y年%m月%d日 %H:%M:%S')/g" "$doc_file"
+        sed -i "s/DOC_HOSTNAME/$(hostname)/g" "$doc_file"
+        sed -i "s/DOC_VERSION/$(nginx -v 2>&1 | sed 's/nginx version: nginx\///' 2>/dev/null || echo '未安装')/g" "$doc_file"
+        sed -i "s|DOC_CONFIG_DIR|$NGINX_CONF_DIR|g" "$doc_file"
+        sed -i "s|DOC_CONFIG_FILE|$NGINX_CONF_FILE|g" "$doc_file"
+    fi
     
     # 统计信息
     local total_sites=0
@@ -209,13 +225,17 @@ DOC_HEADER
             if grep -q "proxy_pass" "$site_file"; then
                 proxy_sites=$((proxy_sites + 1))
                 
-                # 检查长连接
-                if grep -q "keepalive" "$site_file"; then
-                    keepalive_sites=$((keepalive_sites + 1))
+                # 检查长连接（查看nginx.conf中的upstream配置）
+                local site_upstream=""
+                if grep -q "proxy_pass.*http://[^/]*" "$site_file"; then
+                    site_upstream=$(grep "proxy_pass" "$site_file" | sed 's/.*http:\/\/\([^/]*\).*/\1/' | head -1)
+                    if [ -f "$NGINX_CONF_FILE" ] && grep -A 10 "upstream $site_upstream" "$NGINX_CONF_FILE" | grep -q "keepalive"; then
+                        keepalive_sites=$((keepalive_sites + 1))
+                    fi
                 fi
                 
-                # 检查WebSocket
-                if grep -q "upgrade.*websocket\|Connection.*upgrade" "$site_file"; then
+                # 检查WebSocket（更准确的检测）
+                if grep -q "proxy_set_header.*Upgrade\|proxy_set_header.*Connection.*upgrade" "$site_file"; then
                     websocket_sites=$((websocket_sites + 1))
                 fi
             else
@@ -291,17 +311,26 @@ EOF
                     done
                 fi
                 
-                # 检查长连接配置
-                if grep -q "keepalive" "$site_file"; then
-                    local keepalive_num=$(grep "keepalive [0-9]" "$site_file" | head -1 | sed 's/.*keepalive *//; s/;.*//')
-                    local keepalive_timeout=$(grep "keepalive_timeout" "$site_file" | head -1 | sed 's/.*keepalive_timeout *//; s/;.*//')
-                    local keepalive_requests=$(grep "keepalive_requests" "$site_file" | head -1 | sed 's/.*keepalive_requests *//; s/;.*//')
-                    
+                # 检查长连接配置（检查upstream或代理设置）
+                local site_upstream=""
+                local has_keepalive=false
+                
+                if grep -q "proxy_pass.*http://[^/]*" "$site_file"; then
+                    site_upstream=$(grep "proxy_pass" "$site_file" | sed 's/.*http:\/\/\([^/]*\).*/\1/' | head -1)
+                    if [ -f "$NGINX_CONF_FILE" ] && grep -A 10 "upstream $site_upstream" "$NGINX_CONF_FILE" | grep -q "keepalive"; then
+                        has_keepalive=true
+                        local keepalive_num=$(grep -A 10 "upstream $site_upstream" "$NGINX_CONF_FILE" | grep "keepalive [0-9]" | head -1 | sed 's/.*keepalive *//; s/;.*//')
+                        local keepalive_timeout=$(grep -A 10 "upstream $site_upstream" "$NGINX_CONF_FILE" | grep "keepalive_timeout" | head -1 | sed 's/.*keepalive_timeout *//; s/;.*//')
+                        local keepalive_requests=$(grep -A 10 "upstream $site_upstream" "$NGINX_CONF_FILE" | grep "keepalive_requests" | head -1 | sed 's/.*keepalive_requests *//; s/;.*//')
+                    fi
+                fi
+                
+                if [ "$has_keepalive" = true ]; then
                     cat >> "$doc_file" << EOF
 - **🔗 长连接优化**: ✅ 已启用
-  - 连接池大小: \`$keepalive_num\`
-  - 超时时间: \`$keepalive_timeout\`
-  - 最大请求数: \`$keepalive_requests\`
+  - 连接池大小: \`${keepalive_num:-未设置}\`
+  - 超时时间: \`${keepalive_timeout:-未设置}\`
+  - 最大请求数: \`${keepalive_requests:-未设置}\`
 EOF
                 else
                     cat >> "$doc_file" << EOF
@@ -310,8 +339,8 @@ EOF
 EOF
                 fi
                 
-                # 检查WebSocket支持
-                if grep -q "upgrade.*websocket\|Connection.*upgrade" "$site_file"; then
+                # 检查WebSocket支持（更准确的检测）
+                if grep -q "proxy_set_header.*Upgrade\|proxy_set_header.*Connection.*upgrade" "$site_file"; then
                     cat >> "$doc_file" << EOF
 - **🌐 WebSocket**: ✅ 支持
 EOF
@@ -572,8 +601,10 @@ nginx-manager.sh status
 **版本**: 2.0
 EOF
     
-    echo -e "${GREEN}✅ Nginx配置文档已生成: $doc_file${NC}"
+    local relative_path="docs/$(basename "$doc_file")"
+    echo -e "${GREEN}✅ Nginx配置文档已生成: $relative_path${NC}"
     echo -e "${BLUE}📖 文档包含了所有站点的详细配置信息和优化建议${NC}"
+    echo -e "${CYAN}📁 文档保存位置: $doc_file${NC}"
     
     # 如果在桌面环境，尝试打开文档
     if command -v xdg-open >/dev/null 2>&1; then
@@ -848,9 +879,6 @@ remove_site() {
 
 # 主函数
 main() {
-    check_root
-    check_dependencies
-    
     # 解析全局参数
     local custom_config_path=""
     local args=()
@@ -885,8 +913,13 @@ main() {
     # 设置nginx配置路径
     set_nginx_paths "$custom_config_path"
     
-    # 初始化环境
-    init_environment
+    # 获取命令以便决定是否需要完整初始化
+    local command="${args[0]}"
+    
+    # 初始化环境（generate-docs和help命令除外）
+    if [ "$command" != "generate-docs" ] && [ "$command" != "help" ] && [ "$command" != "--help" ] && [ "$command" != "-h" ]; then
+        init_environment
+    fi
     
     # 恢复参数
     set -- "${args[@]}"
@@ -898,6 +931,12 @@ main() {
     
     local command=$1
     shift
+    
+    # 检查权限和依赖项（generate-docs命令除外）
+    if [ "$command" != "generate-docs" ] && [ "$command" != "help" ] && [ "$command" != "--help" ] && [ "$command" != "-h" ]; then
+        check_root
+        check_dependencies
+    fi
     
     case "$command" in
         add-site)
