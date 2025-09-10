@@ -34,12 +34,14 @@ sudo yum install iptables-services
 ## 安装说明
 
 1. 下载脚本到系统目录:
+
 ```bash
 sudo cp port-protect.sh /usr/local/bin/
 sudo chmod +x /usr/local/bin/port-protect.sh
 ```
 
-2. 创建符号链接 (可选):
+1. 创建符号链接 (可选):
+
 ```bash
 sudo ln -s /usr/local/bin/port-protect.sh /usr/local/bin/port-protect
 ```
@@ -47,6 +49,7 @@ sudo ln -s /usr/local/bin/port-protect.sh /usr/local/bin/port-protect
 ## 基本用法
 
 ### 命令格式
+
 ```bash
 ./port-protect.sh [命令] [参数]
 ```
@@ -60,6 +63,7 @@ sudo ln -s /usr/local/bin/port-protect.sh /usr/local/bin/port-protect
 | `backup` | 备份当前iptables规则 | `./port-protect.sh backup prod_backup` |
 | `restore` | 从备份恢复规则 | `./port-protect.sh restore prod_backup` |
 | `list-backups` | 列出所有备份 | `./port-protect.sh list-backups` |
+| `list-ports` | 列出已受保护端口 | `./port-protect.sh list-ports` |
 | `save` | 保存规则到持久存储 | `./port-protect.sh save` |
 | `status` | 查看当前保护状态 | `./port-protect.sh status` |
 | `help` | 显示帮助信息 | `./port-protect.sh help` |
@@ -69,11 +73,13 @@ sudo ln -s /usr/local/bin/port-protect.sh /usr/local/bin/port-protect
 ### 1. 添加端口保护
 
 基本用法:
+
 ```bash
 sudo ./port-protect.sh add 8080
 ```
 
 高级用法:
+
 ```bash
 sudo ./port-protect.sh add 8080 \
   --protocol tcp \
@@ -105,6 +111,7 @@ sudo ./port-protect.sh remove 8080
 ### 3. 备份管理
 
 #### 创建备份
+
 ```bash
 # 创建带标签的备份
 sudo ./port-protect.sh backup production
@@ -114,6 +121,7 @@ sudo ./port-protect.sh backup
 ```
 
 #### 恢复备份
+
 ```bash
 # 从标签恢复
 sudo ./port-protect.sh restore production
@@ -126,6 +134,7 @@ sudo ./port-protect.sh restore
 ```
 
 #### 查看备份列表
+
 ```bash
 sudo ./port-protect.sh list-backups
 ```
@@ -133,6 +142,7 @@ sudo ./port-protect.sh list-backups
 ### 4. 规则持久化
 
 保存当前规则到系统配置:
+
 ```bash
 sudo ./port-protect.sh save
 ```
@@ -140,6 +150,7 @@ sudo ./port-protect.sh save
 ### 5. 状态查看
 
 查看当前防护状态:
+
 ```bash
 sudo ./port-protect.sh status
 ```
@@ -190,6 +201,32 @@ sudo ./port-protect.sh backup rdp_protection
 # 保存规则
 sudo ./port-protect.sh save
 ```
+
+### 场景2.1: 多个RDP端口同时防护
+
+自 2025-09 起，脚本默认为每个端口创建独立链 `DOCKER-HOST-PROTECT-<port>`，互不影响，适合多实例 RDP。
+
+```bash
+# 添加多个 RDP 端口
+for p in 19099 19100 19101; do
+  sudo ./port-protect.sh add $p --rdp --trust 192.168.1.100
+done
+
+# 查看受保护端口汇总
+sudo ./port-protect.sh list-ports
+
+# 移除其中一个端口
+sudo ./port-protect.sh remove 19100
+```
+
+如果需要统一策略并集中维护，可显式指定同一个共享链（注意：共享链中 flush 行为不会自动触发，需手动维护）：
+
+```bash
+sudo ./port-protect.sh add 19099 --rdp --chain DOCKER-HOST-PROTECT --trust 192.168.1.100
+sudo ./port-protect.sh add 19100 --rdp --chain DOCKER-HOST-PROTECT --trust 192.168.1.100
+```
+
+> 安全提示：共享链模式下可信 IP 规则仍绑定端口 (--dport)，不会意外放宽其它端口。
 
 ### 场景3: 保护SSH服务
 
@@ -249,6 +286,14 @@ sudo ./port-protect.sh restore before_emergency
 - **配置文件**: `/etc/port-protect.conf`
 - **默认链名**: `DOCKER-HOST-PROTECT`
 
+### 链策略变更说明 (2025-09)
+
+旧版本：所有端口复用单一链 `DOCKER-HOST-PROTECT`，每次添加新端口会 flush 影响已有端口规则。
+
+新版本：默认为每个端口创建独立链 `DOCKER-HOST-PROTECT-<port>`；只有在显式使用 `--chain <name>` 时才共享。
+
+迁移：原先已存在的 `DOCKER-HOST-PROTECT` 输入引用仍能正常工作，移除端口会自动检测对应链，不需手动迁移。建议为关键端口重新执行 add 命令获得独立链隔离。
+
 ## 错误处理
 
 脚本包含完善的错误处理机制:
@@ -262,12 +307,14 @@ sudo ./port-protect.sh restore before_emergency
 ## 常见问题
 
 ### Q1: 脚本运行提示权限不足
+
 ```bash
 # 确保使用root权限运行
 sudo ./port-protect.sh status
 ```
 
 ### Q2: 提示缺少依赖项
+
 ```bash
 # Debian/Ubuntu
 sudo apt-get install iptables-persistent
@@ -277,12 +324,14 @@ sudo yum install iptables-services
 ```
 
 ### Q3: 规则重启后消失
+
 ```bash
 # 保存规则到持久存储
 sudo ./port-protect.sh save
 ```
 
 ### Q4: 误删规则如何恢复
+
 ```bash
 # 查看可用备份
 sudo ./port-protect.sh list-backups
@@ -292,6 +341,7 @@ sudo ./port-protect.sh restore
 ```
 
 ### Q5: 如何查看当前生效的规则
+
 ```bash
 # 查看脚本管理的规则
 sudo ./port-protect.sh status
@@ -301,6 +351,7 @@ sudo iptables -L -n --line-numbers
 ```
 
 ### Q6: RDP连接添加规则后无法使用
+
 ```bash
 # 先移除有问题的规则
 sudo ./port-protect.sh remove 19099
@@ -313,6 +364,7 @@ sudo ./port-protect.sh add 19099 --whitelist-only -t 你的IP地址
 ```
 
 ### Q7: 如何为特定协议选择合适的保护模式
+
 - **RDP/VNC等远程桌面**: 推荐使用 `--rdp` 模式或 `--whitelist-only` 模式
 - **SSH**: 推荐使用 `--whitelist-only` 模式，限制特定IP访问
 - **Web服务**: 使用默认模式，适当调整 `--limit` 和 `--burst` 参数
@@ -329,6 +381,7 @@ sudo ./port-protect.sh add 19099 --whitelist-only -t 你的IP地址
 ## 高级技巧
 
 ### 1. 批量操作
+
 ```bash
 # 为多个端口添加相同规则
 for port in 8080 8081 8082; do
@@ -342,12 +395,14 @@ done
 ```
 
 ### 2. 配合定时任务
+
 ```bash
 # 添加到crontab，每天备份规则
 0 2 * * * /usr/local/bin/port-protect.sh backup daily_$(date +\%Y\%m\%d)
 ```
 
 ### 3. 监控脚本
+
 ```bash
 #!/bin/bash
 # 检查端口保护状态
@@ -363,11 +418,13 @@ fi
 RDP优化模式专为远程桌面协议设计，解决了传统速率限制对长连接协议的影响：
 
 **特性：**
+
 - 自动调整速率限制为 `30/min`，突发限制为 `50`
 - 允许已建立的连接（`ESTABLISHED,RELATED` 状态）无限制通过
 - 针对RDP协议的连接特性进行优化
 
 **适用场景：**
+
 - Windows远程桌面连接
 - VNC连接
 - 其他需要保持长连接的远程管理协议
@@ -377,11 +434,13 @@ RDP优化模式专为远程桌面协议设计，解决了传统速率限制对�
 白名单模式提供最严格的访问控制，仅允许指定的IP地址访问：
 
 **特性：**
+
 - 不使用速率限制，直接基于IP地址进行访问控制
 - 必须配合 `--trust` 参数使用
 - 提供最高级别的安全保护
 
 **适用场景：**
+
 - SSH管理端口
 - 数据库连接端口
 - 内部管理接口

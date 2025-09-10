@@ -7,8 +7,15 @@
 # 配置参数
 BACKUP_DIR="/var/backups/iptables"
 CURRENT_BACKUP="$BACKUP_DIR/current.rules"
+# 基础链名前缀（向后兼容旧版本将所有端口放入同一链的方式）
 CHAIN_NAME="DOCKER-HOST-PROTECT"
 CONFIG_FILE="/etc/port-protect.conf"
+
+# 设计变更 (2025-09):
+# 旧实现对每次 add 会对共享链 flush，导致添加第二个端口时第一个端口的规则被清空，
+# 输入链仍引用该链但链里没有对应端口规则 -> 端口失去保护；同时可信IP规则未限定端口导致放大权限。
+# 新策略: 默认每个端口使用独立链 <CHAIN_NAME>-<port>，除非用户显式 --chain 指定共享链。
+# 可信IP规则改为附带 -p/--dport 以限定于该端口。
 
 # 显示帮助信息
 show_help() {
@@ -21,6 +28,7 @@ show_help() {
     echo "  backup [标签]         备份当前iptables规则"
     echo "  restore [标签|文件]   从备份恢复规则"
     echo "  list-backups          列出所有备份"
+    echo "  list-ports            列出已受保护的端口 (含协议/链)"
     echo "  save                  保存规则使其重启后依然有效"
     echo "  status                查看当前保护状态"
     echo
@@ -37,6 +45,9 @@ show_help() {
     echo "示例:"
     echo "  # 添加RDP端口保护 (优化模式)"
     echo "  $0 add 19099 --rdp -t 192.168.1.100 -t 10.0.0.5"
+    echo
+    echo "  # 添加多个RDP端口 (各自独立链)"
+    echo "  for p in 19099 19100 19101; do $0 add $p --rdp -t 192.168.1.100; done"
     echo
     echo "  # 添加端口保护并备份"
     echo "  $0 add 8080 -t 192.168.1.100 -t 10.0.0.5 && $0 backup before_8080"
@@ -263,7 +274,8 @@ add_rules() {
     local limit="5/min"
     local burst="10"
     local trusted_ips=()
-    local chain_name="$CHAIN_NAME"
+    # 默认使用独立链（向后兼容：若用户用 --chain 传入与旧版本相同的 DOCKER-HOST-PROTECT 则共享）
+    local chain_name=""
     local rdp_mode=false
     local whitelist_only=false
     local strict_mode=false
@@ -321,9 +333,9 @@ add_rules() {
                 ;;
             -r|--rdp)
                 rdp_mode=true
-                # RDP协议优化参数 - 更严格的限制
-                limit="10/min"
-                burst="15"
+                # RDP协议优化参数 (与文档保持一致 30/min, burst 50)
+                limit="30/min"
+                burst="50"
                 shift
                 ;;
             -w|--whitelist-only)
@@ -345,25 +357,35 @@ add_rules() {
         esac
     done
 
-    # 创建自定义链（如果不存在）
+    # 若未显式指定 --chain 则使用独立链名
+    if [ -z "$chain_name" ]; then
+        chain_name="${CHAIN_NAME}-${port}"
+    fi
+
+    # 创建链（不存在则创建，存在则仅在我们重建该端口规则时清空）
     if ! iptables -L "$chain_name" >/dev/null 2>&1; then
         if ! iptables -N "$chain_name" 2>/dev/null; then
             echo "错误: 无法创建自定义链 $chain_name" >&2
             exit 1
         fi
         echo " [+] 创建自定义链: $chain_name"
-    fi
-    
-    # 清空链中的旧规则
-    if ! iptables -F "$chain_name" 2>/dev/null; then
-        echo "错误: 无法清空链 $chain_name" >&2
-        exit 1
+    else
+        # 仅在该链看起来是专用于此端口 (命名匹配 -<port>) 或用户确实希望覆盖时清空
+        if [[ "$chain_name" == *"-${port}" ]]; then
+            if ! iptables -F "$chain_name" 2>/dev/null; then
+                echo "错误: 无法清空链 $chain_name" >&2
+                exit 1
+            fi
+            echo " [+] 重建端口 $port 的链: $chain_name"
+        else
+            echo " [!] 使用共享链 $chain_name (不会清空已有其它端口规则)"
+        fi
     fi
     
     # 添加可信IP规则
     for ip in "${trusted_ips[@]}"; do
-        if iptables -A "$chain_name" -s "$ip" -j ACCEPT 2>/dev/null; then
-            echo " [+] 添加可信IP: $ip"
+        if iptables -A "$chain_name" -s "$ip" -p "$protocol" --dport "$port" -j ACCEPT 2>/dev/null; then
+            echo " [+] 添加可信IP(限端口 $port): $ip"
         else
             echo "警告: 无法添加可信IP $ip" >&2
         fi
@@ -376,7 +398,7 @@ add_rules() {
             exit 1
         fi
         # 直接拒绝其他所有连接
-        if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" -j DROP 2>/dev/null; then
+    if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" -j DROP 2>/dev/null; then
             echo "错误: 无法添加白名单拒绝规则" >&2
             exit 1
         fi
@@ -441,44 +463,60 @@ add_rules() {
 remove_rules() {
     local port=$1
     local protocol="${2:-tcp}"
-    local chain_name="${3:-$CHAIN_NAME}"
-    
-    # 检查链是否存在
-    if ! iptables -L "$chain_name" >/dev/null 2>&1; then
-        echo "⚠️  自定义链 '$chain_name' 不存在，无需操作"
-        return 0
+    local user_chain="${3:-}" # 用户显式传入的链名（可为空）
+
+    # 优先使用用户指定，其次尝试新格式 <CHAIN_NAME>-<port>，最后回退旧共享链
+    local chain_candidates=()
+    if [ -n "$user_chain" ]; then
+        chain_candidates+=("$user_chain")
     fi
-    
-    # 从INPUT链移除引用
-    local removed=false
-    while iptables -C INPUT -p "$protocol" --dport "$port" -j "$chain_name" 2>/dev/null; do
-        if iptables -D INPUT -p "$protocol" --dport "$port" -j "$chain_name" 2>/dev/null; then
-            echo " [-] 从INPUT链移除规则"
-            removed=true
-        else
-            echo "警告: 无法从INPUT链移除规则" >&2
+    chain_candidates+=("${CHAIN_NAME}-${port}" "$CHAIN_NAME")
+
+    local found_chain=""
+    for c in "${chain_candidates[@]}"; do
+        if iptables -L "$c" >/dev/null 2>&1; then
+            found_chain="$c"
             break
         fi
     done
-    
-    # 检查链是否还被其他规则使用
-    local chain_refs=$(iptables -S | grep -c "\-j $chain_name" || true)
-    
-    if [ "$chain_refs" -eq 0 ]; then
-        # 删除自定义链
-        if iptables -F "$chain_name" 2>/dev/null && iptables -X "$chain_name" 2>/dev/null; then
-            echo " [-] 删除自定义链: $chain_name"
-        else
-            echo "警告: 无法删除自定义链 $chain_name" >&2
-        fi
-    else
-        echo " [!] 自定义链 $chain_name 仍被其他规则使用，保留链"
+
+    if [ -z "$found_chain" ]; then
+        echo "⚠️  未找到与端口 $port 相关的链 (尝试: ${chain_candidates[*]})"
+        return 0
     fi
-    
-    if [ "$removed" = true ]; then
-        echo "✅ 已成功移除端口 $port/$protocol 的防护规则"
+
+    local chain_name="$found_chain"
+
+    # 从INPUT链移除引用（只针对该端口）
+    local removed=false
+    while iptables -C INPUT -p "$protocol" --dport "$port" -j "$chain_name" 2>/dev/null; do
+        if iptables -D INPUT -p "$protocol" --dport "$port" -j "$chain_name" 2>/dev/null; then
+            echo " [-] 从INPUT链移除规则 ($port)"
+            removed=true
+        else
+            echo "警告: 无法从INPUT链移除规则 ($port)" >&2
+            break
+        fi
+    done
+
+    # 如果链是专用链 (名称结尾为 -<port>) 且不再被引用则删除
+    local chain_refs=$(iptables -S | grep -c "\-j $chain_name" || true)
+    if [[ "$chain_name" == *"-${port}" ]] && [ "$chain_refs" -eq 0 ]; then
+        if iptables -F "$chain_name" 2>/dev/null && iptables -X "$chain_name" 2>/dev/null; then
+            echo " [-] 删除专用链: $chain_name"
+        else
+            echo "警告: 无法删除链 $chain_name" >&2
+        fi
+    elif [ "$chain_refs" -eq 0 ]; then
+        echo " [!] 共享链 $chain_name 当前无引用（保留以兼容其它端口历史规则）"
     else
-        echo "⚠️  未找到端口 $port/$protocol 的防护规则"
+        echo " [!] 链 $chain_name 仍被其它端口引用 ($chain_refs)"
+    fi
+
+    if [ "$removed" = true ]; then
+        echo "✅ 已成功移除端口 $port/$protocol 的防护规则 (链: $chain_name)"
+    else
+        echo "⚠️  未找到端口 $port/$protocol 的INPUT引用 (链: $chain_name)"
     fi
 }
 
@@ -513,6 +551,24 @@ show_status() {
     
     local backup_count=$(ls "$BACKUP_DIR"/*.rules 2>/dev/null | wc -l)
     echo "备份文件总数: $backup_count"
+}
+
+# 列出已受保护端口（解析 INPUT 链跳转及独立链内规则）
+list_ports() {
+    echo "已受保护端口列表 (按链归类):"
+    echo "----------------------------------------"
+    # 收集 INPUT 链中跳转记录
+    iptables -S INPUT 2>/dev/null | grep -E "-j (${CHAIN_NAME}(-[0-9]+)?)" | while read -r line; do
+        # 提取 --dport 与链名
+        local port=$(echo "$line" | sed -n 's/.*--dport \([0-9]\+\).*/\1/p')
+        local proto=$(echo "$line" | sed -n 's/.*-p \(tcp\|udp\).*/\1/p')
+        local chain=$(echo "$line" | sed -n "s/.*-j \(${CHAIN_NAME}[-0-9]*\).*/\1/p")
+        if [ -n "$port" ]; then
+            echo "链: $chain  端口: $port/$proto"
+        fi
+    done | sort -u || true
+    echo "----------------------------------------"
+    echo "提示: 默认每个端口使用独立链 ${CHAIN_NAME}-<port>。使用 --chain 可共享。"
 }
 
 # 主函数
@@ -563,6 +619,10 @@ main() {
             
         list-backups)
             list_backups
+            ;;
+
+        list-ports)
+            list_ports
             ;;
             
         save)
