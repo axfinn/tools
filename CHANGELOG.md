@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0] - 2025-09-10
+
+### ✨ Added
+
+- `port-protect.sh`: 新增 `list-ports` 命令，快速列出所有受保护端口及对应链/协议
+- 多 RDP 端口示例与独立链策略文档更新
+
+### 🔄 Changed
+
+- 默认策略从“单共享链”变为“每端口独立链 (DOCKER-HOST-PROTECT-\<port\>)”以避免端口间互相影响
+- RDP 模式参数与文档统一为 `30/min` + `burst 50`
+
+### 🐛 Fixed
+
+- 修复添加第二个端口会 flush 掉第一个端口规则导致其失去防护的问题
+- 修复可信 IP 规则未限定端口导致权限放大的问题（现在规则附带 --dport）
+- `remove` 命令现在智能识别独立链 / 旧共享链并正确清理
+
+### 🛡️ Security
+
+- 防止多端口共享链时的静默降级（链被清空但 INPUT 仍引用）带来的潜在暴露
+- 白名单条目限制到具体端口，降低误放通面
+
+### 📚 Docs
+
+- 更新 `scripts/port-protection/README.md`：新增多 RDP 端口场景、链策略变更说明、`list-ports` 命令
+- 标注 2025-09 链策略迁移提示
+
+### ✅ Migration Notes
+
+无需强制迁移；已有引用共享链 `DOCKER-HOST-PROTECT` 的老规则仍有效。建议为关键端口重新执行 add 以获得独立链隔离：
+
+```bash
+sudo ./port-protect.sh remove 19099 && sudo ./port-protect.sh add 19099 --rdp -t <your-ip>
+```
+
+---
+
 ## [2.0.0] - 2025-08-19
 
 ### 🚀 新增功能
