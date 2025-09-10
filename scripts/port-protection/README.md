@@ -95,8 +95,8 @@ sudo ./port-protect.sh add 8080 \
 | 参数 | 简写 | 默认值 | 描述 |
 |------|------|--------|------|
 | `--protocol` | `-p` | tcp | 协议类型 (tcp/udp) |
-| `--limit` | `-l` | 10/min | 速率限制 (例: 10/min, 5/sec) |
-| `--burst` | `-b` | 20 | 突发请求限制数量 |
+| `--limit` | `-l` | 5/min | 速率限制 (例: 5/min, 5/sec) |
+| `--burst` | `-b` | 10 | 突发请求限制数量 |
 | `--trust` | `-t` | 无 | 可信IP (可多次使用) |
 | `--chain` | `-c` | DOCKER-HOST-PROTECT | 自定义链名称 |
 | `--rdp` | `-r` | 无 | RDP协议优化模式 |
@@ -293,6 +293,16 @@ sudo ./port-protect.sh restore before_emergency
 新版本：默认为每个端口创建独立链 `DOCKER-HOST-PROTECT-<port>`；只有在显式使用 `--chain <name>` 时才共享。
 
 迁移：原先已存在的 `DOCKER-HOST-PROTECT` 输入引用仍能正常工作，移除端口会自动检测对应链，不需手动迁移。建议为关键端口重新执行 add 命令获得独立链隔离。
+
+### 默认参数说明 (2025-09 对齐)
+
+当前基础模式默认速率限制为 `5/min`，突发 `10`（脚本内部默认值）；RDP 模式固定初始为 `30/min`、`burst 50`，如需覆写请在 `--rdp` 之后附加 `-l / -b` 重新指定。例如：
+
+```bash
+sudo ./port-protect.sh add 19099 --rdp -l 20/min -b 25 -t 1.2.3.4
+```
+
+执行顺序很重要：若把 `-l` 放在 `--rdp` 之前会被 RDP 预设覆盖，应始终放在其后。
 
 ## 错误处理
 

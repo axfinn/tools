@@ -30,17 +30,17 @@ sudo ./port-protect.sh add 13389 --rdp -t 你的常用IP
 
 ### 🔐 严格配置（自定义限制）
 ```bash
-# 更严格的速率限制，进一步降低爆破成功率
-sudo ./port-protect.sh add 13389 --rdp -l 10/min -b 20 -t 你的IP
+# 覆写 RDP 默认 (30/min 50) 为更低速率，进一步降低爆破成功率
+sudo ./port-protect.sh add 13389 --rdp -l 15/min -b 25 -t 你的IP
 ```
 
 ## 问题分析
 
-你的13389端口RDP协议在添加防护规则后无法使用的原因：
+你的13389端口RDP协议在旧版本脚本添加防护规则后可能无法使用的原因：
 
-1. **默认速率限制过严**：脚本默认限制为 `10/min` 和突发 `20`，对RDP协议太严格
-2. **RDP连接特性**：RDP需要建立多个TCP连接，且需要保持长连接
-3. **缺少已建立连接的处理**：原脚本没有特别处理已建立的连接
+1. **旧默认值过严或策略不匹配**：早期实现未统一 RDP 模式参数
+2. **RDP连接特性**：需要多个握手与长生命周期
+3. **缺少 ESTABLISHED 放行（旧版本）**：新版本已在 --rdp 模式自动放行已建立连接
 
 ## 解决方案
 
@@ -57,16 +57,21 @@ sudo ./port-protect.sh add 13389 --rdp -t 你的IP地址
 # 方式2: 仅白名单模式（最安全）
 sudo ./port-protect.sh add 13389 --whitelist-only -t 你的IP地址
 
-# 方式3: 自定义参数的RDP模式
+# 方式3: 自定义参数的RDP模式 (参数需写在 --rdp 之后，否则会被预设覆盖)
 sudo ./port-protect.sh add 13389 --rdp -l 50/min -b 100 -t 你的IP地址
+
+# 方式4: 多端口批量（每端口独立链）
+for p in 13389 13390 13391; do sudo ./port-protect.sh add $p --rdp -t 你的IP地址; done
 ```
 
 ### 3. 检查规则状态
+
 ```bash
 sudo ./port-protect.sh status
 ```
 
 ### 4. 保存规则（重启后生效）
+
 ```bash
 sudo ./port-protect.sh save
 ```
@@ -74,11 +79,13 @@ sudo ./port-protect.sh save
 ## 新增功能说明
 
 ### RDP优化模式 (`--rdp`)
+
 - 自动调整速率限制为 `30/min`，突发为 `50`
 - 允许已建立的连接无限制通过
 - 适合RDP等需要长连接的协议
 
 ### 白名单模式 (`--whitelist-only`)
+
 - 仅允许指定的可信IP访问
 - 不添加速率限制，直接拒绝非白名单IP
 - 最安全的访问控制方式
@@ -121,6 +128,7 @@ sudo ./port-protect.sh restore before_rdp_fix
 ## 防护效果验证
 
 ### 测试爆破防护
+
 ```bash
 # 测试速率限制是否生效（从另一台机器执行）
 for i in {1..50}; do
@@ -131,6 +139,7 @@ done
 ```
 
 ### 监控防护日志
+
 ```bash
 # 实时监控被阻止的连接
 sudo iptables -L DOCKER-HOST-PROTECT -v -n --line-numbers
