@@ -23,24 +23,28 @@ show_help() {
     echo "使用方式: $0 [命令] [参数]"
     echo
     echo "命令:"
-    echo "  add <端口> [选项]     添加端口保护规则"
-    echo "  remove <端口>         移除端口保护规则"
-    echo "  backup [标签]         备份当前iptables规则"
-    echo "  restore [标签|文件]   从备份恢复规则"
-    echo "  list-backups          列出所有备份"
-    echo "  list-ports            列出已受保护的端口 (含协议/链)"
-    echo "  save                  保存规则使其重启后依然有效"
-    echo "  status                查看当前保护状态"
+    echo "  add <端口> [选项]       添加端口保护规则"
+    echo "  remove <端口> [选项]    移除端口保护规则"
+    echo "  backup [标签]           备份当前iptables规则"
+    echo "  restore [标签|文件]     从备份恢复规则"
+    echo "  list-backups            列出所有备份"
+    echo "  list-ports              列出已受保护的端口 (含协议/链)"
+    echo "  save                    保存规则使其重启后依然有效"
+    echo "  status                  查看当前保护状态"
     echo
-    echo "添加/移除选项:"
+    echo "添加选项 (add):"
     echo "  -p, --protocol <tcp|udp>     协议类型 (默认: tcp)"
     echo "  -l, --limit <rate>           请求限制速率 (默认: 5/min)"
     echo "  -b, --burst <count>          突发请求限制 (默认: 10)"
     echo "  -t, --trust <ip>             添加可信IP (可多次使用)"
-    echo "  -c, --chain <name>           自定义链名称 (默认: DOCKER-HOST-PROTECT)"
-    echo "  -r, --rdp                    RDP协议优化模式 (10/min, burst 15)"
+    echo "  -c, --chain <name>           自定义链名称 (默认: DOCKER-HOST-PROTECT-<端口>)"
+    echo "  -r, --rdp                    RDP协议优化模式 (30/min, burst 50)"
     echo "  -w, --whitelist-only         仅允许可信IP访问 (不添加速率限制)"
     echo "  -s, --strict                 严格模式 (2/min, burst 3) - 高安全环境"
+    echo
+    echo "移除选项 (remove):"
+    echo "  -p, --protocol <tcp|udp>     协议类型 (默认: tcp)"
+    echo "  -c, --chain <name>           指定要移除的链名称"
     echo
     echo "示例:"
     echo "  # 添加RDP端口保护 (优化模式)"
@@ -152,9 +156,16 @@ backup_rules() {
         echo "错误: 无法创建备份文件 $backup_file" >&2
         return 1
     fi
-    
+
+    # 设置备份文件权限（防火墙规则可能包含敏感信息）
+    if ! chmod 600 "$backup_file" 2>/dev/null; then
+        echo "警告: 无法设置备份文件权限" >&2
+    fi
+
     if ! cp "$backup_file" "$CURRENT_BACKUP" 2>/dev/null; then
         echo "警告: 无法更新当前备份文件" >&2
+    else
+        chmod 600 "$CURRENT_BACKUP" 2>/dev/null
     fi
     
     # 记录到配置文件
@@ -200,6 +211,8 @@ restore_rules() {
     local pre_restore_backup="${BACKUP_DIR}/pre_restore_$(date +%s).rules"
     if ! iptables-save > "$pre_restore_backup" 2>/dev/null; then
         echo "警告: 无法创建恢复前备份" >&2
+    else
+        chmod 600 "$pre_restore_backup" 2>/dev/null
     fi
     
     # 恢复规则
@@ -271,15 +284,15 @@ add_rules() {
     
     # 解析选项
     local protocol="tcp"
-    local limit="5/min"
-    local burst="10"
+    local limit=""
+    local burst=""
     local trusted_ips=()
     # 默认使用独立链（向后兼容：若用户用 --chain 传入与旧版本相同的 DOCKER-HOST-PROTECT 则共享）
     local chain_name=""
     local rdp_mode=false
     local whitelist_only=false
     local strict_mode=false
-    
+
     while [ $# -gt 0 ]; do
         case "$1" in
             -p|--protocol)
@@ -333,9 +346,6 @@ add_rules() {
                 ;;
             -r|--rdp)
                 rdp_mode=true
-                # RDP协议优化参数 (与文档保持一致 30/min, burst 50)
-                limit="30/min"
-                burst="50"
                 shift
                 ;;
             -w|--whitelist-only)
@@ -344,9 +354,6 @@ add_rules() {
                 ;;
             -s|--strict)
                 strict_mode=true
-                # 严格模式参数 - 最严格的速率限制
-                limit="2/min"
-                burst="3"
                 shift
                 ;;
             *)
@@ -356,6 +363,21 @@ add_rules() {
                 ;;
         esac
     done
+
+    # 设置默认值（优先级：用户指定 > 模式默认 > 全局默认）
+    if [ "$rdp_mode" = true ]; then
+        # RDP模式默认值
+        [ -z "$limit" ] && limit="30/min"
+        [ -z "$burst" ] && burst="50"
+    elif [ "$strict_mode" = true ]; then
+        # 严格模式默认值
+        [ -z "$limit" ] && limit="2/min"
+        [ -z "$burst" ] && burst="3"
+    else
+        # 标准模式默认值
+        [ -z "$limit" ] && limit="5/min"
+        [ -z "$burst" ] && burst="10"
+    fi
 
     # 若未显式指定 --chain 则使用独立链名
     if [ -z "$chain_name" ]; then
@@ -524,22 +546,37 @@ remove_rules() {
 show_status() {
     echo "当前端口保护状态:"
     echo "========================================"
-    
-    # 检查自定义链是否存在
-    if iptables -L "$CHAIN_NAME" >/dev/null 2>&1; then
-        echo "自定义链 '$CHAIN_NAME' 规则:"
-        echo "----------------------------------------"
-        iptables -L "$CHAIN_NAME" -n --line-numbers
+
+    # 获取所有相关的链（包括旧版共享链和新版独立链）
+    local all_chains=$(iptables -S 2>/dev/null | grep -oE "\-j ${CHAIN_NAME}(-[0-9]+)?" | sed 's/-j //' | sort -u)
+
+    if [ -n "$all_chains" ]; then
+        echo "发现以下防护链:"
         echo
+        while IFS= read -r chain; do
+            if iptables -L "$chain" >/dev/null 2>&1; then
+                echo "链名称: $chain"
+                echo "----------------------------------------"
+                iptables -L "$chain" -n --line-numbers 2>/dev/null
+
+                # 显示INPUT链中对此链的引用
+                echo
+                echo "INPUT链引用:"
+                iptables -S INPUT 2>/dev/null | grep "\-j $chain" || echo "  (未找到引用)"
+                echo "========================================"
+                echo
+            fi
+        done <<< "$all_chains"
     else
-        echo "自定义链 '$CHAIN_NAME' 不存在"
+        echo "未找到任何防护链"
         echo
     fi
-    
-    echo "INPUT链中相关规则:"
+
+    # 显示所有受保护的端口概览
+    echo "受保护端口概览:"
     echo "----------------------------------------"
-    iptables -L INPUT -n --line-numbers | grep -E "($CHAIN_NAME|dpt:)" || echo "未找到相关规则"
-    
+    list_ports
+
     echo
     echo "备份信息:"
     echo "----------------------------------------"
@@ -548,7 +585,7 @@ show_status() {
     else
         echo "当前备份: 无"
     fi
-    
+
     local backup_count=$(ls "$BACKUP_DIR"/*.rules 2>/dev/null | wc -l)
     echo "备份文件总数: $backup_count"
 }
@@ -605,8 +642,44 @@ main() {
                 exit 1
             fi
             local port=$1
+            shift
             validate_port "$port"
-            remove_rules "$port"
+
+            # 解析可选参数
+            local protocol="tcp"
+            local user_chain=""
+
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    -p|--protocol)
+                        if [ -z "$2" ] || [[ "$2" =~ ^- ]]; then
+                            echo "错误: --protocol 需要参数" >&2
+                            exit 1
+                        fi
+                        protocol="$2"
+                        if [[ ! "$protocol" =~ ^(tcp|udp)$ ]]; then
+                            echo "错误: 协议必须是 tcp 或 udp" >&2
+                            exit 1
+                        fi
+                        shift 2
+                        ;;
+                    -c|--chain)
+                        if [ -z "$2" ] || [[ "$2" =~ ^- ]]; then
+                            echo "错误: --chain 需要参数" >&2
+                            exit 1
+                        fi
+                        user_chain="$2"
+                        shift 2
+                        ;;
+                    *)
+                        echo "错误: 未知选项 $1" >&2
+                        show_help
+                        exit 1
+                        ;;
+                esac
+            done
+
+            remove_rules "$port" "$protocol" "$user_chain"
             ;;
             
         backup)

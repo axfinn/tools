@@ -104,8 +104,17 @@ sudo ./port-protect.sh add 8080 \
 
 ### 2. 移除端口保护
 
+基本用法:
+
 ```bash
+# 移除TCP端口（默认）
 sudo ./port-protect.sh remove 8080
+
+# 移除UDP端口
+sudo ./port-protect.sh remove 8080 --protocol udp
+
+# 移除指定链名称的端口
+sudo ./port-protect.sh remove 8080 --chain MY_CUSTOM_CHAIN
 ```
 
 ### 3. 备份管理
@@ -294,15 +303,26 @@ sudo ./port-protect.sh restore before_emergency
 
 迁移：原先已存在的 `DOCKER-HOST-PROTECT` 输入引用仍能正常工作，移除端口会自动检测对应链，不需手动迁移。建议为关键端口重新执行 add 命令获得独立链隔离。
 
-### 默认参数说明 (2025-09 对齐)
+### 默认参数说明 (2025-10 更新)
 
-当前基础模式默认速率限制为 `5/min`，突发 `10`（脚本内部默认值）；RDP 模式固定初始为 `30/min`、`burst 50`，如需覆写请在 `--rdp` 之后附加 `-l / -b` 重新指定。例如：
+脚本支持三种模式，每种有不同的默认参数：
+
+- **标准模式**: 速率限制 `5/min`，突发 `10`
+- **RDP模式** (`--rdp`): 速率限制 `30/min`，突发 `50`
+- **严格模式** (`--strict`): 速率限制 `2/min`，突发 `3`
+
+用户可以通过 `-l` 和 `-b` 参数覆盖任何模式的默认值，参数位置不影响结果：
 
 ```bash
+# 使用RDP模式但自定义限制
 sudo ./port-protect.sh add 19099 --rdp -l 20/min -b 25 -t 1.2.3.4
+
+# 参数顺序不影响结果（以下两种写法等效）
+sudo ./port-protect.sh add 19099 -l 20/min --rdp -t 1.2.3.4
+sudo ./port-protect.sh add 19099 --rdp -l 20/min -t 1.2.3.4
 ```
 
-执行顺序很重要：若把 `-l` 放在 `--rdp` 之前会被 RDP 预设覆盖，应始终放在其后。
+优先级规则：用户指定的 `-l` 和 `-b` 参数 > 模式默认值 > 全局默认值
 
 ## 错误处理
 
