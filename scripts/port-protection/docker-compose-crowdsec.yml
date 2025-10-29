@@ -30,8 +30,13 @@ services:
       - ./crowdsec/data:/var/lib/crowdsec/data:rw
 
       # 系统日志文件（只读）
+      # Debian/Ubuntu 系统使用：
       - /var/log/auth.log:/logs/auth.log:ro
       - /var/log/syslog:/logs/syslog:ro
+
+      # CentOS/RHEL 系统使用（请注释掉上面两行，取消下面两行注释）：
+      # - /var/log/secure:/logs/secure:ro
+      # - /var/log/messages:/logs/messages:ro
 
       # 如果需要监控Docker容器日志
       # - /var/run/docker.sock:/var/run/docker.sock:ro

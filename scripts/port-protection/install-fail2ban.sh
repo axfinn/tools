@@ -2,11 +2,16 @@
 
 # Fail2Ban快速安装和配置脚本
 # 用途：一键安装Fail2Ban并配置RDP+SSH保护
-# 适用：Debian/Ubuntu系统
+# 适用：Debian/Ubuntu/CentOS/RHEL系统（多系统支持）
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="2.0.0"
+
+# 系统检测变量
+OS_TYPE=""      # "rhel" 或 "debian"
+PKG_MANAGER=""  # "yum", "dnf", 或 "apt"
+LOG_PATH=""     # "/var/log/secure" 或 "/var/log/auth.log"
 
 # 颜色
 RED='\033[0;31m'
@@ -40,6 +45,45 @@ check_root() {
     fi
 }
 
+detect_os() {
+    log_info "检测操作系统..."
+
+    if [ ! -f /etc/os-release ]; then
+        log_error "无法检测操作系统（/etc/os-release不存在）"
+        exit 1
+    fi
+
+    source /etc/os-release
+    local OS_ID="${ID:-unknown}"
+
+    case "$OS_ID" in
+        centos|rhel|rocky|almalinux|fedora)
+            OS_TYPE="rhel"
+            LOG_PATH="/var/log/secure"
+
+            if command -v dnf >/dev/null 2>&1; then
+                PKG_MANAGER="dnf"
+            else
+                PKG_MANAGER="yum"
+            fi
+
+            log_success "检测到 CentOS/RHEL 系统 (包管理器: $PKG_MANAGER)"
+            ;;
+        debian|ubuntu|linuxmint|pop)
+            OS_TYPE="debian"
+            PKG_MANAGER="apt"
+            LOG_PATH="/var/log/auth.log"
+
+            log_success "检测到 Debian/Ubuntu 系统"
+            ;;
+        *)
+            log_error "不支持的操作系统: $OS_ID"
+            echo "仅支持: CentOS, RHEL, Debian, Ubuntu"
+            exit 1
+            ;;
+    esac
+}
+
 get_current_ip() {
     local ip=""
     if [ -n "${SSH_CLIENT:-}" ]; then
@@ -66,13 +110,37 @@ install_fail2ban() {
         fi
     fi
 
-    # 更新包列表
-    log_info "更新包列表..."
-    apt-get update
+    if [ "$OS_TYPE" = "rhel" ]; then
+        # CentOS/RHEL 安装
+        log_info "检查 EPEL 仓库..."
 
-    # 安装Fail2Ban
-    log_info "安装Fail2Ban..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban
+        # 安装 EPEL（如果未安装）
+        if ! rpm -q epel-release >/dev/null 2>&1; then
+            log_info "安装 EPEL 仓库..."
+            $PKG_MANAGER install -y epel-release || {
+                log_error "EPEL 仓库安装失败"
+                exit 1
+            }
+            log_success "EPEL 仓库已安装"
+        else
+            log_success "EPEL 仓库已安装"
+        fi
+
+        # 安装 Fail2Ban
+        log_info "安装 Fail2Ban..."
+        if [ "$PKG_MANAGER" = "dnf" ]; then
+            $PKG_MANAGER install -y fail2ban fail2ban-systemd
+        else
+            $PKG_MANAGER install -y fail2ban fail2ban-systemd
+        fi
+    else
+        # Debian/Ubuntu 安装
+        log_info "更新包列表..."
+        apt-get update
+
+        log_info "安装Fail2Ban..."
+        DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban
+    fi
 
     log_success "Fail2Ban安装完成"
     fail2ban-client --version
@@ -81,30 +149,38 @@ install_fail2ban() {
 configure_ssh() {
     log_info "配置SSH保护..."
 
-    cat > /etc/fail2ban/jail.d/sshd.local << 'EOF'
+    cat > /etc/fail2ban/jail.d/sshd.local << EOF
 [sshd]
 enabled  = true
 port     = ssh
 filter   = sshd
-logpath  = /var/log/auth.log
+logpath  = $LOG_PATH
 maxretry = 5
 bantime  = 3600      # 封禁1小时
 findtime = 600       # 10分钟内
 EOF
 
-    log_success "SSH保护已配置"
+    log_success "SSH保护已配置 (日志: $LOG_PATH)"
 }
 
 configure_rdp() {
     log_info "配置RDP保护..."
 
+    # RDP 日志路径（根据系统选择）
+    local rdp_log="$LOG_PATH"
+    if [ "$OS_TYPE" = "debian" ]; then
+        # Debian/Ubuntu 可能同时监控 syslog 和 auth.log
+        rdp_log="/var/log/syslog
+         /var/log/auth.log"
+    fi
+
     # 创建RDP jail配置
-    cat > /etc/fail2ban/jail.d/rdp.local << 'EOF'
+    cat > /etc/fail2ban/jail.d/rdp.local << EOF
 [rdp]
 enabled  = true
 port     = 3389
 filter   = rdp
-logpath  = /var/log/syslog
+logpath  = $rdp_log
 maxretry = 3
 bantime  = 86400     # 封禁24小时
 findtime = 600       # 10分钟内
@@ -122,7 +198,7 @@ failregex = ^.*Failed password.*from <HOST>.*$
 ignoreregex =
 EOF
 
-    log_success "RDP保护已配置"
+    log_success "RDP保护已配置 (日志: $rdp_log)"
 }
 
 configure_whitelist() {
@@ -261,18 +337,19 @@ main() {
     cat << 'EOF'
 ╔═══════════════════════════════════════╗
 ║   Fail2Ban 快速安装配置脚本          ║
-║   版本: 1.0.0                        ║
+║   版本: 2.0.0 (多系统支持)           ║
 ╚═══════════════════════════════════════╝
 EOF
     echo -e "${NC}"
 
     echo
     log_info "这个脚本将："
-    echo "  1. 安装Fail2Ban"
-    echo "  2. 配置SSH保护"
-    echo "  3. 配置RDP保护"
-    echo "  4. 设置白名单"
-    echo "  5. 启动服务"
+    echo "  1. 检测操作系统类型"
+    echo "  2. 安装Fail2Ban"
+    echo "  3. 配置SSH保护"
+    echo "  4. 配置RDP保护"
+    echo "  5. 设置白名单"
+    echo "  6. 启动服务"
     echo
     read -p "继续? (y/N): " confirm
 
@@ -282,6 +359,9 @@ EOF
     fi
 
     # 执行安装和配置
+    detect_os
+    echo
+
     install_fail2ban
     echo
 
@@ -315,6 +395,13 @@ EOF
     echo "  2. 查看日志: sudo tail -f /var/log/fail2ban.log"
     echo "  3. 测试保护: 尝试多次SSH登录失败"
     echo "  4. 修改配置: /etc/fail2ban/jail.local"
+    if [ "$OS_TYPE" = "rhel" ]; then
+        echo
+        echo "CentOS/RHEL 注意事项："
+        echo "  - SSH日志位置: $LOG_PATH"
+        echo "  - 如果使用 firewalld，确保已停用（脚本使用 iptables）"
+        echo "  - SELinux 可能需要配置: sudo setenforce 0 (测试)"
+    fi
 }
 
 main "$@"

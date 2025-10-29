@@ -1,15 +1,20 @@
 #!/bin/bash
 
-# 黑名单管理脚本 - Debian/Ubuntu 优化版本
+# 黑名单管理脚本 - 多系统兼容版本
 # 管理被封禁的IP地址，支持滚动日志记录
 # 使用 ipset 实现高效的IP集合管理
-# 针对 Debian/Ubuntu 系统优化
+# 支持：CentOS/RHEL 7+, Debian/Ubuntu 18.04+
 
 set -euo pipefail  # 更严格的错误处理
 
 # 版本信息
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_NAME="$(basename "$0")"
+
+# 系统类型（运行时检测）
+OS_TYPE=""
+PKG_MANAGER=""
+FIREWALL_CMD=""
 
 # 配置
 IPSET_NAME="port-protect-blacklist"
@@ -40,7 +45,7 @@ debug_log() {
 # 显示帮助信息
 show_help() {
     cat << EOF
-${BLUE}黑名单管理脚本${NC} - Debian/Ubuntu 优化版本 v${VERSION}
+${BLUE}黑名单管理脚本${NC} - 多系统兼容版 v${VERSION} (CentOS/Debian/Ubuntu)
 
 ${YELLOW}使用方式:${NC} $SCRIPT_NAME [命令] [参数]
 
@@ -97,20 +102,48 @@ detect_os() {
         . /etc/os-release
         OS_ID="$ID"
         OS_VERSION="$VERSION_ID"
-        debug_log "检测到操作系统: $OS_ID $OS_VERSION"
+        OS_NAME="$NAME"
+        debug_log "检测到操作系统: $OS_NAME ($OS_ID $OS_VERSION)"
     else
         echo -e "${RED}错误: 无法检测操作系统类型${NC}" >&2
         exit 1
     fi
 
-    # 检查是否为 Debian/Ubuntu
+    # 检测系统类型并设置包管理器
     case "$OS_ID" in
+        centos|rhel|rocky|almalinux|fedora)
+            OS_TYPE="rhel"
+            # CentOS 8+/RHEL 8+ 使用 dnf
+            if command -v dnf >/dev/null 2>&1; then
+                PKG_MANAGER="dnf"
+            else
+                PKG_MANAGER="yum"
+            fi
+            FIREWALL_CMD="firewalld"
+            debug_log "系统类型: RHEL系列, 包管理器: $PKG_MANAGER"
+            ;;
         debian|ubuntu|linuxmint|pop)
-            debug_log "确认为 Debian/Ubuntu 系列"
+            OS_TYPE="debian"
+            PKG_MANAGER="apt"
+            FIREWALL_CMD="iptables"
+            debug_log "系统类型: Debian系列, 包管理器: $PKG_MANAGER"
             ;;
         *)
-            echo -e "${YELLOW}警告: 此脚本专为 Debian/Ubuntu 优化，您的系统是 $OS_ID${NC}"
-            echo -e "${YELLOW}部分功能可能无法正常工作${NC}"
+            echo -e "${YELLOW}警告: 未知系统类型 $OS_ID，尝试继续...${NC}"
+            # 尝试检测包管理器
+            if command -v dnf >/dev/null 2>&1; then
+                OS_TYPE="rhel"
+                PKG_MANAGER="dnf"
+            elif command -v yum >/dev/null 2>&1; then
+                OS_TYPE="rhel"
+                PKG_MANAGER="yum"
+            elif command -v apt-get >/dev/null 2>&1; then
+                OS_TYPE="debian"
+                PKG_MANAGER="apt"
+            else
+                echo -e "${RED}错误: 无法检测包管理器${NC}" >&2
+                exit 1
+            fi
             ;;
     esac
 }
@@ -121,15 +154,30 @@ install_dependencies() {
 
     detect_os
 
-    local packages=("ipset" "iptables" "ipset-persistent" "iptables-persistent")
     local missing_packages=()
 
-    # 检查缺失的包
-    for pkg in "${packages[@]}"; do
-        if ! dpkg -l | grep -q "^ii  $pkg "; then
-            missing_packages+=("$pkg")
-        fi
-    done
+    # 根据系统类型检查包
+    if [ "$OS_TYPE" = "rhel" ]; then
+        # CentOS/RHEL 包列表
+        local packages=("ipset" "iptables" "iptables-services")
+
+        # 检查缺失的包
+        for pkg in "${packages[@]}"; do
+            if ! rpm -q "$pkg" >/dev/null 2>&1; then
+                missing_packages+=("$pkg")
+            fi
+        done
+    else
+        # Debian/Ubuntu 包列表
+        local packages=("ipset" "iptables" "ipset-persistent" "iptables-persistent")
+
+        # 检查缺失的包
+        for pkg in "${packages[@]}"; do
+            if ! dpkg -l "$pkg" 2>/dev/null | grep -q "^ii"; then
+                missing_packages+=("$pkg")
+            fi
+        done
+    fi
 
     if [ ${#missing_packages[@]} -eq 0 ]; then
         echo -e "${GREEN}✓ 所有依赖包已安装${NC}"
@@ -145,33 +193,65 @@ install_dependencies() {
         exit 1
     fi
 
-    # 更新包列表
-    echo -e "${BLUE}更新包列表...${NC}"
-    if ! apt-get update; then
-        echo -e "${RED}错误: 无法更新包列表${NC}" >&2
-        exit 1
-    fi
+    # 根据包管理器安装
+    if [ "$OS_TYPE" = "rhel" ]; then
+        # CentOS/RHEL 安装
+        echo -e "${BLUE}使用 $PKG_MANAGER 安装依赖包...${NC}"
 
-    # 安装包
-    echo -e "${BLUE}安装依赖包...${NC}"
-    for pkg in "${missing_packages[@]}"; do
-        echo -e "${CYAN}安装 $pkg...${NC}"
-        if DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"; then
-            echo -e "${GREEN}✓ $pkg 安装成功${NC}"
-        else
-            # ipset-persistent 在某些版本可能不可用
-            if [ "$pkg" = "ipset-persistent" ]; then
-                echo -e "${YELLOW}⚠ ipset-persistent 不可用，将使用手动保存方式${NC}"
-                continue
+        # 确保 EPEL 仓库可用（某些包可能需要）
+        if [ "$PKG_MANAGER" = "yum" ]; then
+            if ! rpm -q epel-release >/dev/null 2>&1; then
+                echo -e "${BLUE}安装 EPEL 仓库...${NC}"
+                $PKG_MANAGER install -y epel-release || true
             fi
-            echo -e "${RED}错误: $pkg 安装失败${NC}" >&2
+        fi
+
+        # 安装包
+        for pkg in "${missing_packages[@]}"; do
+            echo -e "${CYAN}安装 $pkg...${NC}"
+            if $PKG_MANAGER install -y "$pkg"; then
+                echo -e "${GREEN}✓ $pkg 安装成功${NC}"
+            else
+                echo -e "${RED}错误: $pkg 安装失败${NC}" >&2
+                exit 1
+            fi
+        done
+
+        # 启用 iptables 服务
+        if rpm -q iptables-services >/dev/null 2>&1; then
+            systemctl enable iptables 2>/dev/null || true
+        fi
+
+    else
+        # Debian/Ubuntu 安装
+        echo -e "${BLUE}更新包列表...${NC}"
+        if ! apt-get update; then
+            echo -e "${RED}错误: 无法更新包列表${NC}" >&2
             exit 1
         fi
-    done
+
+        # 安装包
+        echo -e "${BLUE}安装依赖包...${NC}"
+        for pkg in "${missing_packages[@]}"; do
+            echo -e "${CYAN}安装 $pkg...${NC}"
+            if DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"; then
+                echo -e "${GREEN}✓ $pkg 安装成功${NC}"
+            else
+                # ipset-persistent 在某些版本可能不可用
+                if [ "$pkg" = "ipset-persistent" ]; then
+                    echo -e "${YELLOW}⚠ ipset-persistent 不可用，将使用手动保存方式${NC}"
+                    continue
+                fi
+                echo -e "${RED}错误: $pkg 安装失败${NC}" >&2
+                exit 1
+            fi
+        done
+    fi
 
     echo -e "${GREEN}✓ 所有依赖包安装完成${NC}"
 }
 
+# 检查依赖
 # 检查依赖
 check_dependencies() {
     local missing_deps=()

@@ -2,11 +2,16 @@
 
 # CrowdSec Docker 快速部署脚本
 # 用途：一键部署 CrowdSec + Firewall Bouncer
-# 适用：Debian/Ubuntu 系统
+# 适用：Debian/Ubuntu/CentOS/RHEL 系统（多系统支持）
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="2.0.0"
+
+# 系统检测变量
+OS_TYPE=""      # "rhel" 或 "debian"
+PKG_MANAGER=""  # "yum", "dnf", 或 "apt"
+LOG_PATH=""     # "/var/log/secure" 或 "/var/log/auth.log"
 
 # 颜色
 RED='\033[0;31m'
@@ -46,12 +51,61 @@ check_root() {
     fi
 }
 
+detect_os() {
+    log_info "检测操作系统..."
+
+    if [ ! -f /etc/os-release ]; then
+        log_error "无法检测操作系统（/etc/os-release不存在）"
+        exit 1
+    fi
+
+    source /etc/os-release
+    local OS_ID="${ID:-unknown}"
+
+    case "$OS_ID" in
+        centos|rhel|rocky|almalinux|fedora)
+            OS_TYPE="rhel"
+            LOG_PATH="/var/log/secure"
+
+            if command -v dnf >/dev/null 2>&1; then
+                PKG_MANAGER="dnf"
+            else
+                PKG_MANAGER="yum"
+            fi
+
+            log_success "检测到 CentOS/RHEL 系统 (包管理器: $PKG_MANAGER)"
+            ;;
+        debian|ubuntu|linuxmint|pop)
+            OS_TYPE="debian"
+            PKG_MANAGER="apt"
+            LOG_PATH="/var/log/auth.log"
+
+            log_success "检测到 Debian/Ubuntu 系统"
+            ;;
+        *)
+            log_error "不支持的操作系统: $OS_ID"
+            echo "仅支持: CentOS, RHEL, Debian, Ubuntu"
+            exit 1
+            ;;
+    esac
+}
+
 check_docker() {
     if ! command -v docker >/dev/null 2>&1; then
         log_error "Docker 未安装"
         echo
         echo "安装 Docker:"
-        echo "  curl -fsSL https://get.docker.com | sh"
+        if [ "$OS_TYPE" = "rhel" ]; then
+            echo "  CentOS/RHEL:"
+            echo "  sudo yum install -y yum-utils"
+            echo "  sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo"
+            echo "  sudo $PKG_MANAGER install -y docker-ce docker-ce-cli containerd.io"
+            echo "  sudo systemctl enable docker"
+            echo "  sudo systemctl start docker"
+        else
+            echo "  Debian/Ubuntu:"
+            echo "  curl -fsSL https://get.docker.com | sh"
+        fi
         exit 1
     fi
 
@@ -59,7 +113,12 @@ check_docker() {
         log_error "docker-compose 未安装"
         echo
         echo "安装 docker-compose:"
-        echo "  sudo apt-get install docker-compose"
+        if [ "$OS_TYPE" = "rhel" ]; then
+            echo "  sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose"
+            echo "  sudo chmod +x /usr/local/bin/docker-compose"
+        else
+            echo "  sudo apt-get install docker-compose"
+        fi
         exit 1
     fi
 }
@@ -70,10 +129,29 @@ create_directories() {
     mkdir -p "$CONFIG_DIR"
     mkdir -p "$DATA_DIR"
 
-    # 创建采集配置
-    cat > "$CONFIG_DIR/acquis.yaml" << 'EOF'
+    # 创建采集配置（根据系统类型选择日志路径）
+    if [ "$OS_TYPE" = "rhel" ]; then
+        # CentOS/RHEL 日志位置
+        cat > "$CONFIG_DIR/acquis.yaml" << 'EOF'
 ---
-# 系统认证日志（SSH等）
+# 系统认证日志（SSH等） - CentOS/RHEL
+filenames:
+  - /logs/secure
+labels:
+  type: syslog
+
+---
+# 系统日志（RDP、其他服务）
+filenames:
+  - /logs/messages
+labels:
+  type: syslog
+EOF
+    else
+        # Debian/Ubuntu 日志位置
+        cat > "$CONFIG_DIR/acquis.yaml" << 'EOF'
+---
+# 系统认证日志（SSH等） - Debian/Ubuntu
 filenames:
   - /logs/auth.log
 labels:
@@ -86,9 +164,10 @@ filenames:
 labels:
   type: syslog
 EOF
+    fi
 
     chmod 644 "$CONFIG_DIR/acquis.yaml"
-    log_success "目录结构创建完成"
+    log_success "目录结构创建完成 (日志: $LOG_PATH)"
 }
 
 start_crowdsec() {
@@ -163,13 +242,21 @@ install_firewall_bouncer() {
         fi
     fi
 
-    # 添加 CrowdSec 仓库
-    log_info "添加 CrowdSec 仓库..."
-    curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash
+    if [ "$OS_TYPE" = "rhel" ]; then
+        # CentOS/RHEL 安装
+        log_info "添加 CrowdSec 仓库..."
+        curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.rpm.sh | bash
 
-    # 安装 bouncer
-    log_info "安装 crowdsec-firewall-bouncer-iptables..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y crowdsec-firewall-bouncer-iptables
+        log_info "安装 crowdsec-firewall-bouncer-iptables..."
+        $PKG_MANAGER install -y crowdsec-firewall-bouncer-iptables
+    else
+        # Debian/Ubuntu 安装
+        log_info "添加 CrowdSec 仓库..."
+        curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash
+
+        log_info "安装 crowdsec-firewall-bouncer-iptables..."
+        DEBIAN_FRONTEND=noninteractive apt-get install -y crowdsec-firewall-bouncer-iptables
+    fi
 
     log_success "Firewall Bouncer 安装完成"
 }
@@ -352,19 +439,20 @@ main() {
     cat << 'EOF'
 ╔═══════════════════════════════════════╗
 ║   CrowdSec Docker 快速部署脚本        ║
-║   版本: 1.0.0                        ║
+║   版本: 2.0.0 (多系统支持)           ║
 ╚═══════════════════════════════════════╝
 EOF
     echo -e "${NC}"
 
     echo
     log_info "这个脚本将："
-    echo "  1. 检查 Docker 环境"
-    echo "  2. 创建配置目录"
-    echo "  3. 启动 CrowdSec 容器"
-    echo "  4. 生成 Bouncer API Key"
-    echo "  5. 安装 Firewall Bouncer"
-    echo "  6. 配置并启动 Bouncer"
+    echo "  1. 检测操作系统类型"
+    echo "  2. 检查 Docker 环境"
+    echo "  3. 创建配置目录"
+    echo "  4. 启动 CrowdSec 容器"
+    echo "  5. 生成 Bouncer API Key"
+    echo "  6. 安装 Firewall Bouncer"
+    echo "  7. 配置并启动 Bouncer"
     echo
     read -p "继续? (y/N): " confirm
 
@@ -374,6 +462,9 @@ EOF
     fi
 
     # 执行部署
+    detect_os
+    echo
+
     check_docker
     echo
 
@@ -401,6 +492,15 @@ EOF
     show_status
 
     show_next_steps
+
+    if [ "$OS_TYPE" = "rhel" ]; then
+        echo
+        echo -e "${YELLOW}CentOS/RHEL 注意事项：${NC}"
+        echo "  - 日志位置: $LOG_PATH"
+        echo "  - 如果使用 firewalld，建议切换到 iptables"
+        echo "  - SELinux 可能需要配置: sudo setenforce 0 (测试)"
+        echo "  - Docker 日志挂载已自动适配 CentOS"
+    fi
 }
 
 main "$@"
