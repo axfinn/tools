@@ -1,0 +1,62 @@
+# Logrotate 配置文件 - Port Protection
+# 安装位置: /etc/logrotate.d/port-protect
+# 安装命令: sudo cp port-protect.logrotate /etc/logrotate.d/port-protect
+
+/var/log/port-protect-ban.log {
+    # 每天轮转
+    daily
+    # 保留30天的日志
+    rotate 30
+    # 如果日志文件不存在，不报错
+    missingok
+    # 如果日志为空，不轮转
+    notifempty
+    # 轮转后压缩
+    compress
+    # 延迟压缩（第二次轮转时才压缩）
+    delaycompress
+    # 轮转后的文件权限
+    create 0600 root root
+    # 日志轮转后的操作（可选）
+    # postrotate
+    #     # 可以在这里添加通知或其他操作
+    # endscript
+}
+
+/var/log/port-protect-ban-history.log {
+    # 每周轮转
+    weekly
+    # 保留52周（1年）的历史记录
+    rotate 52
+    # 如果日志文件不存在，不报错
+    missingok
+    # 即使为空也轮转（保留历史记录）
+    notifempty
+    # 轮转后压缩
+    compress
+    # 延迟压缩
+    delaycompress
+    # 轮转后的文件权限
+    create 0600 root root
+    # 日志大小超过100M时强制轮转
+    size 100M
+}
+
+/var/log/port-protect-autoban.log {
+    # 每天轮转
+    daily
+    # 保留14天的监控日志
+    rotate 14
+    # 如果日志文件不存在，不报错
+    missingok
+    # 如果日志为空，不轮转
+    notifempty
+    # 轮转后压缩
+    compress
+    # 延迟压缩
+    delaycompress
+    # 轮转后的文件权限
+    create 0600 root root
+    # 日志大小超过50M时强制轮转
+    size 50M
+}

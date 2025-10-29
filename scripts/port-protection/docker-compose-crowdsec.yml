@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # CrowdSec 主服务
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: crowdsec
+    restart: unless-stopped
+
+    environment:
+      # 场景集合（根据需要添加）
+      COLLECTIONS: >
+        crowdsecurity/linux
+        crowdsecurity/sshd
+        crowdsecurity/rdp
+        crowdsecurity/http-cve
+
+      # 时区
+      TZ: Asia/Shanghai
+
+      # 启用指标
+      METRICS_ENABLED: "true"
+
+      # Bouncer Key（可选，也可以后续手动生成）
+      # BOUNCER_KEY_FIREWALL: "your-secure-key-here"
+
+    volumes:
+      # CrowdSec 配置和数据
+      - ./crowdsec/config:/etc/crowdsec:rw
+      - ./crowdsec/data:/var/lib/crowdsec/data:rw
+
+      # 系统日志文件（只读）
+      - /var/log/auth.log:/logs/auth.log:ro
+      - /var/log/syslog:/logs/syslog:ro
+
+      # 如果需要监控Docker容器日志
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
+
+      # 如果有其他应用日志
+      # - /path/to/app/logs:/logs/app:ro
+
+    networks:
+      - crowdsec-network
+
+    ports:
+      # Local API（建议仅本地访问）
+      - "127.0.0.1:8080:8080"
+
+      # Prometheus 指标端口（可选）
+      - "127.0.0.1:6060:6060"
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "cscli", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    # 资源限制（可选）
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # CrowdSec Web Dashboard（可选）
+  dashboard:
+    image: crowdsecurity/crowdsec-dashboard:latest
+    container_name: crowdsec-dashboard
+    restart: unless-stopped
+
+    environment:
+      # CrowdSec API URL
+      CROWDSEC_URL: http://crowdsec:8080
+
+    ports:
+      # Dashboard 访问端口
+      - "3000:3000"
+
+    networks:
+      - crowdsec-network
+
+    depends_on:
+      - crowdsec
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  crowdsec-network:
+    driver: bridge
+
+# volumes 定义（如果需要命名卷）
+# volumes:
+#   crowdsec-config:
+#   crowdsec-data:
