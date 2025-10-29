@@ -2,6 +2,191 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0] - 2025-10-28
+
+### ✨ Added - 自动封禁功能
+
+**新增自动IP封禁系统**：监控被拦截的异常IP，自动加入黑名单
+
+#### 核心功能
+- **自动监控**: 实时监控系统日志，检测触发防护规则的IP地址
+- **智能封禁**: 基于阈值（默认10次/10分钟）自动封禁异常IP
+- **自动解封**: 封禁30天后自动解封，避免永久封禁
+- **白名单保护**: 可信IP永不被自动封禁
+- **滚动日志**: 完整记录封禁历史，支持日志轮转（>10MB自动压缩）
+- **高效实现**: 使用ipset实现，O(1)查询复杂度
+
+#### 新增组件
+
+**1. port-protect.sh (增强)**
+- 新增 `--enable-log` 选项：启用日志记录被拒绝的连接
+- LOG规则速率限制（1/min）：避免日志爆炸
+- 日志格式：`PORT-PROTECT-DROP-<port>: SRC=<IP>`
+- 支持所有模式（标准/RDP/白名单/严格）
+
+**2. blacklist-manager.sh (新增)**
+黑名单管理脚本，支持：
+- `init` - 初始化黑名单系统（创建ipset和iptables规则）
+- `ban <IP> [原因] [时长]` - 封禁IP地址
+  - 默认30天（2592000秒）
+  - 支持自定义时长
+  - 0表示永久封禁
+- `unban <IP>` - 解封IP地址
+- `check <IP>` - 检查IP是否被封禁
+- `list` - 列出所有被封禁的IP
+- `history [IP]` - 查看封禁历史记录
+- `flush` - 清空所有封禁
+- `status` - 查看系统状态
+- `cleanup` - 清理过期日志
+
+**3. auto-ban.sh (新增)**
+自动监控和封禁脚本，支持：
+- `start` - 启动监控服务（后台运行）
+- `stop` - 停止监控服务
+- `status` - 查看监控状态
+- `test` - 测试模式（不实际封禁）
+- `init` - 初始化配置文件
+- `reload` - 重新加载配置
+
+配置项（`/etc/port-protect-autoban.conf`）：
+- `BAN_THRESHOLD=10` - 封禁阈值（触发次数）
+- `TIME_WINDOW=600` - 时间窗口（10分钟）
+- `BAN_DURATION=2592000` - 封禁时长（30天）
+- `WHITELIST=(...)` - 白名单IP/网段
+
+#### 新增文档
+
+- **AUTO_BAN_DESIGN.md** - 完整的架构设计文档
+  - 功能概述和组件说明
+  - 技术实现细节
+  - 工作流程图
+  - 优势和注意事项
+
+- **AUTO_BAN_GUIDE.md** - 详细使用指南（400行+）
+  - 快速开始（6步部署）
+  - 详细配置说明
+  - 使用示例（SSH/RDP/Web）
+  - 日志管理
+  - 故障排除
+  - 进阶使用
+
+- **AUTO_BAN_QUICK_START.md** - 5分钟快速开始
+  - 一键部署流程
+  - 验证清单
+  - 常用命令速查
+
+- **CODE_REVIEW_AUTO_BAN.md** - 代码审查报告
+  - 代码质量评估
+  - 安全性审查
+  - 性能考虑
+  - 已知限制
+
+### 🔄 Changed
+
+**port-protect.sh 增强**：
+- 在DROP规则前添加LOG规则（可选）
+- 日志前缀包含端口号：`PORT-PROTECT-DROP-<port>:`
+- LOG规则带速率限制：`1/min, burst 5`
+- 更新帮助信息，添加 `--enable-log` 说明
+
+### 📋 使用示例
+
+```bash
+# 1. 初始化黑名单系统
+sudo ./blacklist-manager.sh init
+
+# 2. 创建配置文件
+sudo ./auto-ban.sh init
+
+# 3. 配置白名单（编辑 /etc/port-protect-autoban.conf）
+WHITELIST=(
+    "192.168.0.0/16"
+    "你的办公室IP"
+)
+
+# 4. 添加端口保护（启用日志）
+sudo ./port-protect.sh add 22 --whitelist-only --enable-log -t 192.168.1.0/24
+
+# 5. 启动监控
+sudo ./auto-ban.sh start
+
+# 6. 查看状态
+sudo ./auto-ban.sh status
+sudo ./blacklist-manager.sh list
+```
+
+### 🔍 技术细节
+
+#### ipset集合
+```bash
+# 创建支持超时的hash:ip集合
+ipset create port-protect-blacklist hash:ip timeout 2592000
+
+# iptables引用ipset（在INPUT链最前面）
+iptables -I INPUT 1 -m set --match-set port-protect-blacklist src -j DROP
+```
+
+#### 日志格式
+```
+# 监控日志
+[2025-10-28 20:16:45] [WARN] 检测到异常IP: 1.2.3.4 (端口22触发10次防护规则)
+[2025-10-28 20:16:45] [SUCCESS] 已封禁IP: 1.2.3.4
+
+# 封禁历史
+2025-10-28 20:16:45|BAN|1.2.3.4|端口22触发10次防护规则|2592000|2025-11-27 20:16:45
+```
+
+#### 日志文件
+- `/var/log/syslog` - 系统日志（iptables DROP记录）
+- `/var/log/port-protect-autoban.log` - 监控运行日志
+- `/var/log/port-protect-ban.log` - 当前封禁记录（自动轮转）
+- `/var/log/port-protect-ban-history.log` - 完整封禁历史
+
+### 🛡️ 安全特性
+
+1. **白名单保护**: 可信IP永不被自动封禁
+2. **自动解封**: 30天后自动解封，避免永久封禁误伤
+3. **日志完整**: 记录封禁原因、时间、过期时间
+4. **手动控制**: 支持手动封禁/解封
+5. **测试模式**: 可以先测试不实际封禁
+
+### 📊 性能优势
+
+- **ipset**: O(1)查询复杂度，支持百万级IP
+- **日志速率限制**: 避免日志风暴
+- **日志轮转**: 自动压缩，节省空间
+- **关联数组**: bash内置，统计快速
+
+### ⚠️ 重要提示
+
+1. **必须启用日志**: 添加端口保护时必须使用 `--enable-log` 选项
+2. **配置白名单**: 务必将自己的IP添加到白名单，避免自锁
+3. **测试建议**: 首次使用建议用测试模式验证（`auto-ban.sh test`）
+4. **系统日志**: 确认系统日志路径（某些系统可能是 `/var/log/messages`）
+
+### 🔄 依赖要求
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install ipset iptables
+
+# CentOS/RHEL
+sudo yum install ipset iptables
+```
+
+### 📝 Migration Notes
+
+**现有用户**：
+- 自动封禁功能为可选，不影响现有防护规则
+- 需要在端口保护时添加 `--enable-log` 才能启用
+- 建议先在测试环境验证
+
+**新用户**：
+- 按照 AUTO_BAN_QUICK_START.md 快速部署
+- 5分钟即可完成初始化
+
+---
+
 ## [2.2.0] - 2025-10-28
 
 ### 🐛 Fixed

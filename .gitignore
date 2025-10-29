@@ -33,3 +33,10 @@ test_*
 # 操作系统文件
 Thumbs.db
 .DS_Store
+
+# 临时项目文档
+BUG_FIXES.md
+PROJECT_REVIEW.md
+
+# nohup 输出
+nohup.out

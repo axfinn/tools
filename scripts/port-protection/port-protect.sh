@@ -41,6 +41,7 @@ show_help() {
     echo "  -r, --rdp                    RDP协议优化模式 (30/min, burst 50)"
     echo "  -w, --whitelist-only         仅允许可信IP访问 (不添加速率限制)"
     echo "  -s, --strict                 严格模式 (2/min, burst 3) - 高安全环境"
+    echo "  --enable-log                 启用日志记录被拒绝的连接（用于自动封禁）"
     echo
     echo "移除选项 (remove):"
     echo "  -p, --protocol <tcp|udp>     协议类型 (默认: tcp)"
@@ -292,6 +293,7 @@ add_rules() {
     local rdp_mode=false
     local whitelist_only=false
     local strict_mode=false
+    local enable_log=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -354,6 +356,10 @@ add_rules() {
                 ;;
             -s|--strict)
                 strict_mode=true
+                shift
+                ;;
+            --enable-log)
+                enable_log=true
                 shift
                 ;;
             *)
@@ -419,8 +425,20 @@ add_rules() {
             echo "错误: 白名单模式至少需要一个可信IP" >&2
             exit 1
         fi
+
+        # 启用日志时，在DROP前记录
+        if [ "$enable_log" = true ]; then
+            if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" \
+                           -m limit --limit 1/min --limit-burst 5 \
+                           -j LOG --log-prefix "PORT-PROTECT-DROP-$port: " --log-level 4 2>/dev/null; then
+                echo "警告: 无法添加日志规则" >&2
+            else
+                echo " [+] 已启用日志记录（速率限制：1/min）"
+            fi
+        fi
+
         # 直接拒绝其他所有连接
-    if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" -j DROP 2>/dev/null; then
+        if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" -j DROP 2>/dev/null; then
             echo "错误: 无法添加白名单拒绝规则" >&2
             exit 1
         fi
@@ -444,7 +462,18 @@ add_rules() {
             echo "错误: 无法添加速率限制规则" >&2
             exit 1
         fi
-        
+
+        # 启用日志时，在DROP前记录被拒绝的连接
+        if [ "$enable_log" = true ]; then
+            if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" \
+                           -m limit --limit 1/min --limit-burst 5 \
+                           -j LOG --log-prefix "PORT-PROTECT-DROP-$port: " --log-level 4 2>/dev/null; then
+                echo "警告: 无法添加日志规则" >&2
+            else
+                echo " [+] 已启用日志记录（速率限制：1/min）"
+            fi
+        fi
+
         # 添加拒绝规则
         if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" -j DROP 2>/dev/null; then
             echo "错误: 无法添加拒绝规则" >&2
