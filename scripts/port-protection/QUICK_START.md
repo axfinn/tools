@@ -283,17 +283,96 @@ sudo ./port-protect.sh add 19099 --rdp -l 20/min -t 1.2.3.4
 5. ✓ 备份文件权限设置（600）
 6. ✓ 文档和帮助信息更新
 
-详见：`BUG_FIXES_SUMMARY.md`
+---
+
+## 🚀 自动封禁快速部署
+
+自动封禁功能可以监控被端口保护规则拦截的IP，自动封禁异常IP。
+
+### 1. 初始化系统（1分钟）
+
+```bash
+# 初始化黑名单系统
+sudo ./blacklist-manager.sh init
+
+# 创建配置文件
+sudo ./auto-ban.sh init
+```
+
+### 2. 配置白名单（1分钟）
+
+```bash
+# 编辑配置文件
+sudo nano /etc/port-protect-autoban.conf
+
+# 添加你的可信IP到WHITELIST数组
+WHITELIST=(
+    "127.0.0.1"
+    "192.168.0.0/16"
+    "10.0.0.0/8"
+    "你的办公室IP"  # 改为实际IP
+)
+
+# 保存并退出 (Ctrl+X, Y, Enter)
+```
+
+### 3. 启用日志并添加端口保护（1分钟）
+
+```bash
+# 重要：必须添加 --enable-log 选项！
+
+# 保护SSH
+sudo ./port-protect.sh add 22 --whitelist-only --enable-log -t 192.168.1.0/24
+
+# 保护RDP
+sudo ./port-protect.sh add 3389 --rdp --enable-log -t 192.168.1.100
+```
+
+### 4. 启动监控服务（30秒）
+
+```bash
+# 启动自动监控服务
+sudo ./auto-ban.sh start
+
+# 查看状态
+sudo ./auto-ban.sh status
+
+# 查看实时日志
+sudo tail -f /var/log/port-protect-autoban.log
+```
+
+### 5. 常用命令
+
+```bash
+# 监控管理
+sudo ./auto-ban.sh start|stop|status|test
+
+# 黑名单管理
+sudo ./blacklist-manager.sh list            # 查看黑名单
+sudo ./blacklist-manager.sh history         # 查看封禁历史
+sudo ./blacklist-manager.sh ban <IP>        # 手动封禁IP
+sudo ./blacklist-manager.sh unban <IP>      # 解封IP
+```
+
+### 6. 验证运行
+
+```bash
+# 查看黑名单
+sudo ./blacklist-manager.sh list
+
+# 查看封禁历史
+sudo ./blacklist-manager.sh history
+
+# 查看系统日志中的拦截记录
+sudo tail -f /var/log/syslog | grep PORT-PROTECT-DROP
+```
 
 ---
 
 ## 📚 更多文档
 
-- **README.md** - 完整使用手册
+- **README.md** - 完整使用手册（包含自动封禁详细说明）
 - **RDP-USAGE.md** - RDP 专用指南
-- **BUG_FIXES_SUMMARY.md** - 修复总结
-- **CODE_REVIEW_FINDINGS.md** - 代码审查报告
-- **test-port-protect.sh** - 自动化测试套件
 
 ---
 

@@ -476,6 +476,250 @@ RDP优化模式专为远程桌面协议设计，解决了传统速率限制对�
 - 内部管理接口
 - 高安全性要求的服务
 
+## 自动封禁功能
+
+### 功能概述
+
+自动封禁系统可以监控被端口保护规则拦截的IP地址，当某个IP在指定时间窗口内触发防护规则超过阈值次数时，自动将其加入黑名单封禁30天。
+
+**核心特性**:
+- ✅ 自动监控: 实时监控系统日志，检测异常IP
+- ✅ 智能封禁: 基于阈值自动封禁，30天后自动解封
+- ✅ 白名单保护: 可信IP永不封禁
+- ✅ 滚动日志: 完整记录封禁历史，支持日志轮转
+- ✅ 高效管理: 使用ipset，O(1)查询复杂度
+
+**组件说明**:
+- `port-protect.sh`: 端口保护（支持 `--enable-log` 选项）
+- `blacklist-manager.sh`: 黑名单管理（封禁/解封/查看）
+- `auto-ban.sh`: 自动监控服务
+
+### 快速部署（5分钟）
+
+#### 1. 初始化黑名单系统
+```bash
+cd /path/to/scripts/port-protection
+
+# 初始化黑名单系统
+sudo ./blacklist-manager.sh init
+
+# 创建配置文件
+sudo ./auto-ban.sh init
+```
+
+#### 2. 配置白名单
+编辑配置文件，添加可信IP：
+```bash
+sudo nano /etc/port-protect-autoban.conf
+```
+
+配置示例：
+```bash
+# 白名单配置
+WHITELIST=(
+    "127.0.0.1"
+    "192.168.0.0/16"
+    "10.0.0.0/8"
+    "你的办公室IP"  # 改为实际IP
+)
+
+# 封禁配置
+BAN_THRESHOLD=10        # 10次触发后封禁
+TIME_WINDOW=600         # 10分钟时间窗口
+BAN_DURATION=2592000    # 封禁30天
+```
+
+#### 3. 添加端口保护并启用日志
+```bash
+# 重要：必须添加 --enable-log 选项！
+
+# 保护SSH
+sudo ./port-protect.sh add 22 --whitelist-only --enable-log -t 192.168.1.0/24
+
+# 保护RDP
+sudo ./port-protect.sh add 3389 --rdp --enable-log -t 192.168.1.100
+
+# 保护其他端口
+sudo ./port-protect.sh add 8080 --enable-log -t 192.168.1.0/24
+```
+
+#### 4. 启动自动监控
+```bash
+# 启动监控服务（后台运行）
+sudo ./auto-ban.sh start
+
+# 查看状态
+sudo ./auto-ban.sh status
+
+# 查看实时日志
+sudo tail -f /var/log/port-protect-autoban.log
+```
+
+### 配置说明
+
+**配置文件**: `/etc/port-protect-autoban.conf`
+
+**主要参数**:
+```bash
+BAN_THRESHOLD=10        # 触发次数：在时间窗口内触发多少次后封禁
+TIME_WINDOW=600         # 时间窗口（秒）：600秒 = 10分钟
+BAN_DURATION=2592000    # 封禁时长（秒）：2592000秒 = 30天，0 = 永久
+AUTO_BAN_ENABLED=true   # 自动封禁开关：true启用，false只监控不封禁
+```
+
+**阈值配置建议**:
+
+| 场景 | 阈值 | 时间窗口 | 封禁时长 |
+|------|------|----------|----------|
+| SSH保护 | 5次 | 5分钟 | 30天 |
+| Web服务 | 20次 | 10分钟 | 7天 |
+| API服务 | 50次 | 30分钟 | 24小时 |
+| RDP保护 | 10次 | 10分钟 | 30天 |
+
+### 使用示例
+
+#### 场景1：保护SSH服务
+```bash
+# 1. 添加SSH端口保护（白名单+日志）
+sudo ./port-protect.sh add 22 --whitelist-only --enable-log -t 192.168.1.0/24
+
+# 2. 启动自动监控
+sudo ./auto-ban.sh start
+
+# 3. 查看日志
+sudo tail -f /var/log/port-protect-autoban.log
+```
+
+#### 场景2：保护多个RDP端口
+```bash
+# 1. 批量添加RDP端口（启用日志）
+for port in 3389 19099 19100; do
+    sudo ./port-protect.sh add $port --rdp --enable-log -t 192.168.1.100
+done
+
+# 2. 启动监控
+sudo ./auto-ban.sh start
+
+# 3. 查看受保护端口
+sudo ./port-protect.sh list-ports
+```
+
+#### 场景3：保护Web应用
+```bash
+# 1. 添加Web端口保护
+sudo ./port-protect.sh add 80 -l 30/min -b 50 --enable-log
+sudo ./port-protect.sh add 443 -l 30/min -b 50 --enable-log
+
+# 2. 配置较宽松的阈值（Web应用流量大）
+sudo nano /etc/port-protect-autoban.conf
+# 设置: BAN_THRESHOLD=50, TIME_WINDOW=600
+
+# 3. 启动监控
+sudo ./auto-ban.sh start
+```
+
+### 日志管理
+
+**日志文件**:
+
+| 日志文件 | 说明 | 位置 |
+|----------|------|------|
+| 系统日志 | iptables DROP记录 | /var/log/syslog |
+| 监控日志 | 监控运行日志 | /var/log/port-protect-autoban.log |
+| 封禁日志 | 当前封禁记录 | /var/log/port-protect-ban.log |
+| 历史记录 | 完整封禁历史 | /var/log/port-protect-ban-history.log |
+
+**查看日志**:
+```bash
+# 查看监控日志（实时）
+sudo tail -f /var/log/port-protect-autoban.log
+
+# 查看封禁日志
+sudo tail -f /var/log/port-protect-ban.log
+
+# 查看系统日志中的DROP记录
+sudo tail -f /var/log/syslog | grep PORT-PROTECT-DROP
+
+# 查看封禁历史
+sudo ./blacklist-manager.sh history
+```
+
+### 常用命令速查
+
+**监控管理**:
+```bash
+sudo ./auto-ban.sh start          # 启动监控
+sudo ./auto-ban.sh stop           # 停止监控
+sudo ./auto-ban.sh status         # 查看状态
+sudo ./auto-ban.sh test           # 测试模式（不实际封禁）
+sudo ./auto-ban.sh reload         # 重新加载配置
+```
+
+**黑名单管理**:
+```bash
+sudo ./blacklist-manager.sh init                    # 初始化系统
+sudo ./blacklist-manager.sh ban 1.2.3.4            # 封禁IP（30天）
+sudo ./blacklist-manager.sh ban 1.2.3.4 "原因" 0    # 永久封禁
+sudo ./blacklist-manager.sh unban 1.2.3.4          # 解封IP
+sudo ./blacklist-manager.sh check 1.2.3.4          # 检查IP
+sudo ./blacklist-manager.sh list                   # 列出黑名单
+sudo ./blacklist-manager.sh history                # 查看历史
+sudo ./blacklist-manager.sh flush                  # 清空黑名单
+sudo ./blacklist-manager.sh status                 # 查看状态
+```
+
+### 常见问题
+
+**Q: 监控服务无法启动**
+
+检查依赖和初始化：
+```bash
+# 安装依赖
+sudo apt-get install ipset iptables  # Debian/Ubuntu
+sudo yum install ipset iptables       # CentOS/RHEL
+
+# 重新初始化
+sudo ./blacklist-manager.sh init
+sudo ./auto-ban.sh start
+```
+
+**Q: 没有检测到被拦截的IP**
+
+可能未启用日志记录：
+```bash
+# 检查端口保护是否启用日志
+sudo ./port-protect.sh status
+
+# 检查系统日志
+sudo tail /var/log/syslog | grep PORT-PROTECT-DROP
+
+# 重新添加端口保护，确保启用日志
+sudo ./port-protect.sh remove 22
+sudo ./port-protect.sh add 22 --whitelist-only --enable-log -t 你的IP
+```
+
+**Q: 白名单IP被封禁**
+
+解封并添加到白名单：
+```bash
+# 1. 解封IP
+sudo ./blacklist-manager.sh unban 你的IP
+
+# 2. 添加到白名单
+sudo nano /etc/port-protect-autoban.conf
+# 在WHITELIST数组中添加IP
+
+# 3. 重新加载配置
+sudo ./auto-ban.sh reload
+```
+
+**Q: 如何设置永久封禁**
+
+```bash
+# 封禁时长设置为0表示永久
+sudo ./blacklist-manager.sh ban 1.2.3.4 "恶意扫描" 0
+```
+
 ## 更新日志
 
 参见项目根目录的 CHANGELOG.md 文件。
