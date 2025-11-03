@@ -446,21 +446,41 @@ add_rules() {
     else
         # RDP模式或普通模式的速率限制
         if [ "$rdp_mode" = true ]; then
-            # RDP特殊处理：允许已建立的连接
+            # RDP模式：先放行已建立连接，再对新连接限速
+            # 放行已建立和相关的连接（不影响正常使用）
             if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" \
                            -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null; then
                 echo "错误: 无法添加RDP已建立连接规则" >&2
                 exit 1
             fi
-            echo " [+] RDP模式: 允许已建立的连接"
-        fi
-        
-        # 添加速率限制规则
-        if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" \
-                       -m conntrack --ctstate NEW \
-                       -m limit --limit "$limit" --limit-burst "$burst" -j ACCEPT 2>/dev/null; then
-            echo "错误: 无法添加速率限制规则" >&2
-            exit 1
+            echo " [+] RDP模式: 允许已建立的连接（不影响正常使用）"
+
+            # 对新连接应用严格的速率限制和连接数限制
+            # 使用 connlimit 限制单个IP的并发连接数，防止多连接爆破
+            if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" \
+                           -m conntrack --ctstate NEW \
+                           -m connlimit --connlimit-above 3 --connlimit-mask 32 -j DROP 2>/dev/null; then
+                echo "警告: 无法添加连接数限制（需要 xt_connlimit 模块）" >&2
+            else
+                echo " [+] 限制单IP最多3个并发连接（防止多连接爆破）"
+            fi
+
+            # 对新连接应用速率限制
+            if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" \
+                           -m conntrack --ctstate NEW \
+                           -m limit --limit "$limit" --limit-burst "$burst" -j ACCEPT 2>/dev/null; then
+                echo "错误: 无法添加RDP速率限制规则" >&2
+                exit 1
+            fi
+            echo " [+] 对新连接应用速率限制: $limit (突发: $burst)"
+        else
+            # 普通模式：仅对新连接应用速率限制
+            if ! iptables -A "$chain_name" -p "$protocol" --dport "$port" \
+                           -m conntrack --ctstate NEW \
+                           -m limit --limit "$limit" --limit-burst "$burst" -j ACCEPT 2>/dev/null; then
+                echo "错误: 无法添加速率限制规则" >&2
+                exit 1
+            fi
         fi
 
         # 启用日志时，在DROP前记录被拒绝的连接
@@ -496,7 +516,8 @@ add_rules() {
     echo "✅ 已成功添加端口 $port/$protocol 的防护规则"
     if [ "$rdp_mode" = true ]; then
         echo "   - RDP优化模式: 速率限制 $limit (突发: $burst)"
-        echo "   - 已建立连接: 无限制"
+        echo "   - 已建立连接: 无限制（不影响正常使用）"
+        echo "   - 新连接限制: 单IP最多3个并发 + 速率限制"
     elif [ "$whitelist_only" = true ]; then
         echo "   - 白名单模式: 仅允许可信IP访问"
     elif [ "$strict_mode" = true ]; then
