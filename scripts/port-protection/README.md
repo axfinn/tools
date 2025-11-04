@@ -118,7 +118,49 @@ sudo ./scripts/port-protect.sh save                 # 保存规则
 
 ---
 
-### 🌍 quick-whitelist.sh - 快速白名单（新增）
+### 🌐 global-protect.sh - 全端口防护（新增）
+
+保护所有端口，记录所有连接请求：
+
+```bash
+sudo ./scripts/global-protect.sh enable -t 你的IP       # 启用全端口防护
+sudo ./scripts/global-protect.sh status                # 查看状态
+sudo ./scripts/global-protect.sh logs -n 100           # 查看日志
+sudo ./scripts/global-protect.sh analyze               # 分析可疑IP
+```
+
+**功能特性：**
+- 🛡️ 保护所有端口（防止端口扫描）
+- 📊 记录所有新连接请求
+- 📈 日志滚动保存
+- 🔍 实时日志分析
+- 🤖 自动识别攻击模式
+
+📖 详细文档：[全端口防护指南](docs/guides/GLOBAL_PROTECTION.md)
+
+---
+
+### 📊 log-analyzer.sh - 日志分析工具（新增）
+
+深度分析连接日志，生成报告：
+
+```bash
+sudo ./scripts/log-analyzer.sh report              # 综合报告
+sudo ./scripts/log-analyzer.sh realtime            # 实时监控
+sudo ./scripts/log-analyzer.sh timeline            # 时间线分析
+sudo ./scripts/log-analyzer.sh attack-pattern      # 攻击模式识别
+sudo ./scripts/log-analyzer.sh export -f json      # 导出数据
+```
+
+**分析功能：**
+- 📈 统计信息（总连接数、Top IP、Top端口）
+- ⏱️ 时间线分析（每小时连接数）
+- 🔍 攻击模式识别（端口扫描、高频连接）
+- 📤 数据导出（JSON/CSV格式）
+
+---
+
+### 🌍 quick-whitelist.sh - 快速白名单
 
 多地点访问的临时白名单管理：
 
@@ -217,7 +259,36 @@ sudo ./scripts/dynamic-ip-whitelist.sh start
 
 ---
 
-### 场景3：白名单模式（最安全）
+### 场景3：全端口防护 + 日志分析
+
+```bash
+# 步骤1：启用全端口防护
+sudo ./scripts/global-protect.sh enable -t 你的IP
+
+# 步骤2：配置日志轮转（避免磁盘满）
+sudo cp config/global-port-protect.logrotate /etc/logrotate.d/global-port-protect
+
+# 步骤3：查看实时监控
+sudo ./scripts/log-analyzer.sh realtime
+
+# 步骤4：生成每日报告
+sudo ./scripts/log-analyzer.sh report
+
+# 步骤5：分析并封禁可疑IP
+sudo ./scripts/global-protect.sh analyze
+```
+
+📊 **防护效果**：
+- 记录所有端口的连接请求
+- 自动识别端口扫描行为
+- 提供详细的统计报告
+- 辅助决策是否封禁IP
+
+📖 详细文档：[全端口防护指南](docs/guides/GLOBAL_PROTECTION.md)
+
+---
+
+### 场景4：白名单模式（最安全）
 
 ```bash
 # 只允许指定IP访问

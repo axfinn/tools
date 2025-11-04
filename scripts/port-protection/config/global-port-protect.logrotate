@@ -1,0 +1,37 @@
+# 全端口防护日志轮转配置
+# 路径: /etc/logrotate.d/global-port-protect
+
+/var/log/global-port-protect.log {
+    # 每天轮转
+    daily
+
+    # 保留30天的日志
+    rotate 30
+
+    # 文件大小超过100M时轮转
+    size 100M
+
+    # 压缩旧日志
+    compress
+    delaycompress
+
+    # 如果日志不存在不报错
+    missingok
+    notifempty
+
+    # 创建新日志文件
+    create 0644 root root
+
+    # 轮转后执行的命令
+    postrotate
+        # 重新加载rsyslog（如果使用rsyslog）
+        /usr/bin/killall -HUP rsyslogd 2>/dev/null || true
+    endscript
+
+    # 日期格式
+    dateext
+    dateformat -%Y%m%d
+
+    # 使用日期作为扩展名而不是数字
+    extension .log
+}
